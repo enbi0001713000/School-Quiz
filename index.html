@@ -3,182 +3,524 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>義務教育9年 5教科ランダム25問クイズ（500問×5教科）</title>
+  <meta name="theme-color" content="#0B1B3A" />
+  <title>義務教育5教科クイズ（25問）</title>
 
   <!-- PWA -->
-  <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#0b1020" />
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" href="./favicon.ico" />
 
-  <!-- Chart.js (Radar) -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Chart.js（レーダーチャート用） -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+
+  <!-- 問題バンク & 本体ロジック（インラインJSは使わない） -->
+  <script src="./bank.js" defer></script>
+  <script src="./app.js" defer></script>
 
   <style>
     :root{
-      --bg:#0b1020; --muted:#8ea0c7; --text:#eaf0ff; --accent:#7aa7ff;
-      --good:#3ddc97; --bad:#ff5c7a; --warn:#ffc857;
-      --border: rgba(255,255,255,0.08);
-      --shadow: 0 10px 25px rgba(0,0,0,0.35);
-      --radius: 16px;
+      --bg:#F7F1E6;         /* クリーム */
+      --ink:#0B1B3A;        /* 紺 */
+      --muted:rgba(11,27,58,.70);
+      --card:rgba(255,255,255,.78);
+      --line:rgba(11,27,58,.14);
+      --accent:rgba(11,27,58,.12);
+      --shadow:0 14px 36px rgba(11,27,58,.12);
+      --radius:18px;
+      --radius2:14px;
     }
-    *{box-sizing:border-box}
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
     body{
       margin:0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Hiragino Kaku Gothic ProN", Meiryo, "Noto Sans JP";
-      background: radial-gradient(1200px 800px at 10% 10%, rgba(122,167,255,.18), transparent 60%),
-                  radial-gradient(900px 700px at 90% 30%, rgba(61,220,151,.12), transparent 55%),
-                  radial-gradient(800px 600px at 50% 90%, rgba(255,92,122,.10), transparent 55%),
-                  var(--bg);
-      color:var(--text);
-      line-height:1.6;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
+      background:
+        radial-gradient(1200px 600px at 15% 8%, rgba(11,27,58,.08), transparent 65%),
+        radial-gradient(900px 500px at 90% 30%, rgba(11,27,58,.06), transparent 60%),
+        var(--bg);
+      color:var(--ink);
     }
-    header{ padding:26px 18px 10px; max-width:1180px; margin:0 auto; }
-    .title{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    h1{ margin:0; font-size:22px; letter-spacing:.3px; }
-    .badge{
-      padding:6px 10px; border:1px solid var(--border); border-radius:999px;
-      color:var(--muted); font-size:12px; backdrop-filter: blur(8px);
+    a{ color:inherit; }
+    .wrap{
+      max-width: 1160px;
+      margin: 28px auto 64px;
+      padding: 0 18px;
     }
-    .sub{ margin-top:8px; color:var(--muted); font-size:14px; }
 
-    main{
-      max-width:1180px; margin:0 auto; padding:12px 18px 32px;
-      display:grid; grid-template-columns: 1.35fr .65fr; gap:18px;
+    /* Header */
+    .topbar{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:14px;
+      margin-bottom:18px;
     }
-    @media (max-width: 980px){ main{ grid-template-columns:1fr; } }
+    .titlebox{
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+    h1{
+      margin:0;
+      font-size: 22px;
+      letter-spacing: .2px;
+    }
+    .subtitle{
+      margin:0;
+      color:var(--muted);
+      font-size: 13px;
+      line-height:1.4;
+    }
+    .pills{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    .pill{
+      padding:10px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.70);
+      border:1px solid var(--line);
+      box-shadow: 0 8px 22px rgba(11,27,58,.08);
+      font-weight: 700;
+      font-size: 12px;
+      color: rgba(11,27,58,.86);
+      min-width: 120px;
+      text-align:center;
+      user-select:none;
+    }
+
+    /* Layout */
+    .grid{
+      display:grid;
+      grid-template-columns: 360px 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 980px){
+      .grid{ grid-template-columns: 1fr; }
+    }
 
     .card{
-      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
-      border:1px solid var(--border); border-radius: var(--radius);
-      box-shadow: var(--shadow); overflow:hidden;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+      overflow:hidden;
     }
     .card .hd{
-      padding:14px 16px; border-bottom:1px solid var(--border);
-      display:flex; justify-content:space-between; gap:10px; align-items:center;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 10px;
     }
-    .card .bd{ padding:16px; }
-    .meta{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; color:var(--muted); font-size:13px; }
-    .pill{ padding:6px 10px; border-radius:999px; border:1px solid var(--border); background: rgba(0,0,0,.10); }
-
-    .btnrow{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
-    button{
-      border:1px solid var(--border); background: rgba(255,255,255,.06); color:var(--text);
-      padding:10px 12px; border-radius: 12px; cursor:pointer;
-      transition: transform .04s ease, background .2s ease, border-color .2s ease;
-      font-weight:700; letter-spacing:.2px;
+    .card .hd b{
+      font-size: 14px;
+      letter-spacing:.2px;
     }
-    button:hover{ background: rgba(255,255,255,.10); }
-    button:active{ transform: translateY(1px); }
-    button.primary{ border-color: rgba(122,167,255,.45); background: rgba(122,167,255,.18); }
-    button.primary:hover{ background: rgba(122,167,255,.26); }
-    button.danger{ border-color: rgba(255,92,122,.45); background: rgba(255,92,122,.12); }
-    button.ghost{ background: transparent; }
-    button:disabled{ opacity:.55; cursor:not-allowed; }
+    .card .bd{
+      padding: 14px 16px;
+    }
 
-    .controls{
+    /* Filters */
+    .sec{ margin-bottom: 14px; }
+    .sec:last-child{ margin-bottom:0; }
+    .sec .label{
+      font-size:12px;
+      font-weight:900;
+      letter-spacing:.2px;
+      margin-bottom:8px;
+    }
+    .checks{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .chk{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding:10px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.64);
+      border:1px solid var(--line);
+      cursor:pointer;
+      user-select:none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .chk input{ transform: translateY(1px); }
+
+    /* Buttons */
+    .btns{
       display:grid;
       grid-template-columns: 1fr 1fr;
       gap:10px;
-      margin-top:10px;
     }
-    @media (max-width: 980px){ .controls{ grid-template-columns: 1fr; } }
-    .controlbox{
-      border:1px solid var(--border);
-      background: rgba(0,0,0,.12);
+    .btn{
+      border:1px solid var(--line);
+      background: rgba(11,27,58,.08);
+      color: var(--ink);
       border-radius: 14px;
-      padding:12px;
+      padding: 11px 12px;
+      font-weight: 900;
+      cursor:pointer;
+      box-shadow: 0 10px 18px rgba(11,27,58,.08);
+      transition: transform .08s ease, background .12s ease;
     }
-    .controlbox .ct{ font-weight:900; margin-bottom:8px; }
-    .checks{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; color:var(--muted); font-size:13px; }
-    .checks label{ display:flex; gap:8px; align-items:center; cursor:pointer; user-select:none; }
-    input[type="checkbox"]{ accent-color: var(--accent); }
-
-    .q{
-      border:1px solid var(--border); border-radius: 14px; padding:14px;
-      background: rgba(0,0,0,.14); margin-bottom:12px;
+    .btn:hover{ background: rgba(11,27,58,.11); }
+    .btn:active{ transform: translateY(1px); }
+    .btn.primary{
+      background: rgba(11,27,58,.86);
+      color: #fff;
+      border-color: rgba(11,27,58,.86);
     }
-    .qtop{ display:flex; justify-content:space-between; gap:10px; align-items:flex-start; margin-bottom:10px; }
-    .qtitle{ font-weight:900; font-size:15px; }
-    .qmeta{ color: var(--muted); font-size:12px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
-    .tag{
-      font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid var(--border);
-      color:var(--muted); background: rgba(255,255,255,.04); user-select:none;
+    .btn.primary:hover{ background: rgba(11,27,58,.92); }
+    .btn.ghost{
+      background: rgba(255,255,255,.70);
     }
-    .tag.good{ color:#b8ffe3; border-color: rgba(61,220,151,.25); }
-    .tag.bad{ color:#ffd0da; border-color: rgba(255,92,122,.25); }
-    .tag.warn{ color:#ffe6b0; border-color: rgba(255,200,87,.25); }
-
-    .choices{ display:grid; gap:8px; }
-    .choice{
-      display:flex; gap:10px; align-items:center;
-      padding:10px 12px; border-radius: 12px; border:1px solid var(--border);
-      background: rgba(255,255,255,.05); cursor:pointer; user-select:none;
-      transition: background .15s ease, border-color .15s ease;
+    .btn:disabled{
+      opacity:.45;
+      cursor:not-allowed;
+      transform:none;
     }
-    .choice:hover{ background: rgba(255,255,255,.08); }
-    .choice input{ accent-color: var(--accent); }
-    .choice.selected{ border-color: rgba(122,167,255,.45); background: rgba(122,167,255,.14); }
-    .choice.correct{ border-color: rgba(61,220,151,.45); background: rgba(61,220,151,.12); }
-    .choice.wrong{ border-color: rgba(255,92,122,.45); background: rgba(255,92,122,.12); }
 
-    .rightcol .card{ position:sticky; top:14px; }
-    @media (max-width: 980px){ .rightcol .card{ position:static; } }
-
-    .resultgrid{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    /* KPI */
+    .kpis{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:10px;
+    }
     .kpi{
-      border:1px solid var(--border); background: rgba(0,0,0,.12);
-      border-radius: 14px; padding:12px;
+      padding: 12px 12px;
+      border-radius: 14px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.64);
     }
-    .kpi .v{ font-size:22px; font-weight:900; }
-    .kpi .k{ color:var(--muted); font-size:12px; margin-top:2px; }
-
-    .analysis{
-      border:1px solid var(--border); border-radius:14px; padding:12px;
-      background: rgba(0,0,0,.12); color: var(--text); font-size: 13.5px;
+    .kpi .v{
+      font-size: 18px;
+      font-weight: 1000;
+      letter-spacing:.2px;
     }
-    .analysis ul{ margin:8px 0 0 18px; color: var(--muted); }
-    .analysis b{ color: var(--text); }
-
-    .numstrip{ display:flex; flex-wrap:wrap; gap:8px; }
-    .numstrip button{
-      width:40px; height:40px; padding:0; border-radius: 12px; font-weight:900;
+    .kpi .k{
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+      font-weight: 800;
     }
-    .numstrip button.good{ border-color: rgba(61,220,151,.45); background: rgba(61,220,151,.12); }
-    .numstrip button.bad{ border-color: rgba(255,92,122,.45); background: rgba(255,92,122,.12); }
-    .numstrip button.neutral{ border-color: rgba(255,255,255,.10); background: rgba(255,255,255,.05); }
 
-    .modalback{
-      position:fixed; inset:0; background: rgba(0,0,0,.55);
-      display:none; align-items:center; justify-content:center; padding:16px; z-index: 50;
+    /* Radar */
+    .radarWrap{
+      padding: 12px;
+      border-radius: 14px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.64);
+    }
+    canvas{ max-width:100%; }
+
+    /* Analysis */
+    #analysisBox{
+      font-size: 13px;
+      line-height: 1.6;
+      color: rgba(11,27,58,.86);
+    }
+    .muted{ color: var(--muted); }
+    .tiny{ font-size: 12px; }
+
+    /* Quiz */
+    #quizRoot{
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+    .q{
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.72);
+      border-radius: 18px;
+      overflow:hidden;
+    }
+    .qtop{
+      padding: 14px 14px 12px;
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .qtitle{
+      font-weight: 1000;
+      font-size: 14px;
+      line-height:1.5;
+    }
+    .qmeta{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      margin-top: 8px;
+    }
+    .tag{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border:1px solid var(--line);
+      background: rgba(11,27,58,.06);
+      font-weight: 900;
+      font-size: 12px;
+    }
+    .tag.good{ background: rgba(46,160,67,.14); border-color: rgba(46,160,67,.24); }
+    .tag.bad{ background: rgba(220,53,69,.12); border-color: rgba(220,53,69,.22); }
+    .tag.warn{ background: rgba(255,193,7,.18); border-color: rgba(255,193,7,.30); }
+
+    .choices{
+      padding: 12px 14px 14px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .choice{
+      display:flex;
+      gap:10px;
+      align-items:flex-start;
+      padding: 10px 12px;
+      border-radius: 14px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.66);
+      cursor:pointer;
+      user-select:none;
+    }
+    .choice input{ margin-top: 3px; }
+    .choice.selected{
+      border-color: rgba(11,27,58,.40);
+      background: rgba(11,27,58,.10);
+    }
+    .choice.correct{
+      border-color: rgba(46,160,67,.42);
+      background: rgba(46,160,67,.12);
+    }
+    .choice.wrong{
+      border-color: rgba(220,53,69,.42);
+      background: rgba(220,53,69,.10);
+    }
+
+    /* Num strip */
+    #numStrip{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      justify-content:flex-start;
+    }
+    #numStrip button{
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      border:1px solid var(--line);
+      background: rgba(255,255,255,.70);
+      font-weight: 1000;
+      cursor:pointer;
+      box-shadow: 0 10px 16px rgba(11,27,58,.06);
+    }
+    #numStrip button:disabled{
+      opacity:.40;
+      cursor:not-allowed;
+      box-shadow:none;
+    }
+    #numStrip button.good{ background: rgba(46,160,67,.14); border-color: rgba(46,160,67,.30); }
+    #numStrip button.bad{ background: rgba(220,53,69,.12); border-color: rgba(220,53,69,.26); }
+    #numStrip button.neutral{ background: rgba(255,255,255,.70); }
+
+    /* Modal */
+    #modalBack{
+      position:fixed;
+      inset:0;
+      background: rgba(11,27,58,.55);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding: 18px;
+      z-index: 50;
     }
     .modal{
-      width:min(800px, 100%);
-      background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.03));
-      border:1px solid var(--border); border-radius: 18px; box-shadow: 0 10px 25px rgba(0,0,0,.35); overflow:hidden;
+      width: min(820px, 100%);
+      border-radius: 22px;
+      background: rgba(247,241,230,.96);
+      border: 1px solid rgba(255,255,255,.22);
+      box-shadow: 0 24px 70px rgba(0,0,0,.30);
+      overflow:hidden;
     }
-    .modal .mh{
-      padding:14px 16px; border-bottom:1px solid var(--border);
-      display:flex; justify-content:space-between; gap:10px; align-items:center;
+    .modal .mhd{
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(11,27,58,.18);
+      display:flex;
+      justify-content:space-between;
+      gap: 10px;
+      align-items:center;
     }
-    .modal .mb{ padding:16px; color:var(--text); }
-    .muted{ color: var(--muted); }
-    .tiny{ font-size:12px; }
-    .hr{ height:1px; background: var(--border); margin:12px 0; }
+    #modalSub{
+      font-weight: 1000;
+      font-size: 13px;
+      color: rgba(11,27,58,.90);
+    }
+    .modal .mbd{
+      padding: 16px;
+      line-height:1.7;
+      font-size: 14px;
+    }
+    .hr{ height:1px; background: rgba(11,27,58,.14); margin: 12px 0; }
+    .closeBtn{
+      border:1px solid rgba(11,27,58,.22);
+      background: rgba(11,27,58,.08);
+      color: var(--ink);
+      border-radius: 12px;
+      padding: 9px 12px;
+      font-weight: 1000;
+      cursor:pointer;
+    }
 
-    .toast{
-      position: fixed; right: 14px; bottom: 14px;
-      padding: 10px 12px; border-radius: 12px;
-      border:1px solid var(--border); background: rgba(0,0,0,.65);
-      color: var(--text); box-shadow: 0 10px 25px rgba(0,0,0,.35);
-      display:none; z-index: 60; font-size: 13px;
+    /* Toast */
+    #toast{
+      position:fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 60;
+      display:none;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border:1px solid rgba(255,255,255,.22);
+      background: rgba(11,27,58,.90);
+      color:#fff;
+      font-weight: 900;
+      box-shadow: 0 18px 48px rgba(11,27,58,.30);
+      max-width: 420px;
     }
   </style>
-
-  <script src="bank.js" defer></script>
-　<script src="app.js" defer></script>
-
 </head>
 
+<body>
+  <div class="wrap">
+
+    <div class="topbar">
+      <div class="titlebox">
+        <h1>義務教育（小〜中）5教科クイズ：25問</h1>
+        <p class="subtitle">
+          国語・数学・英語・理科・社会から各5問（計25問）。提出後に分析＋教科別レーダーチャート、番号ボタンで解説表示。
+        </p>
+      </div>
+
+      <div class="pills" aria-label="status">
+        <div class="pill" id="seedPill">Seed: -</div>
+        <div class="pill" id="timerPill">Time: 00:00</div>
+        <div class="pill" id="progressPill">Answered: 0 / 25</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- LEFT -->
+      <aside class="card">
+        <div class="hd">
+          <b>出題設定</b>
+          <span class="muted tiny">※設定は「新しいクイズ」で反映</span>
+        </div>
+        <div class="bd">
+          <div class="sec">
+            <div class="label">学年タグ</div>
+            <div class="checks" role="group" aria-label="学年">
+              <label class="chk"><input id="lvlE" type="checkbox" checked />小</label>
+              <label class="chk"><input id="lvlJ" type="checkbox" checked />中</label>
+            </div>
+          </div>
+
+          <div class="sec">
+            <div class="label">難易度タグ</div>
+            <div class="checks" role="group" aria-label="難易度">
+              <label class="chk"><input id="dB" type="checkbox" checked />基礎</label>
+              <label class="chk"><input id="dS" type="checkbox" checked />標準</label>
+              <label class="chk"><input id="dA" type="checkbox" checked />発展</label>
+            </div>
+          </div>
+
+          <div class="sec">
+            <div class="btns" aria-label="操作ボタン">
+              <button class="btn primary" id="btnNew" type="button">新しいクイズ</button>
+              <button class="btn ghost" id="btnReset" type="button">回答リセット</button>
+              <button class="btn primary" id="btnSubmit" type="button" disabled>提出（採点）</button>
+              <button class="btn ghost" id="btnCopy" type="button" disabled>結果をコピー</button>
+            </div>
+            <p class="muted tiny" style="margin:10px 0 0;">
+              ※提出後のみ「番号→解説」が開きます。合言葉は <b>0217</b>。
+            </p>
+          </div>
+        </div>
+      </aside>
+
+      <!-- RIGHT -->
+      <main class="card">
+        <div class="hd">
+          <b>結果・分析</b>
+          <span class="muted tiny">提出後に更新</span>
+        </div>
+        <div class="bd">
+          <div id="kpiGrid" class="kpis" aria-label="KPI">
+            <!-- app.js が差し替え -->
+            <div class="kpi"><div class="v">-</div><div class="k">総合スコア</div></div>
+            <div class="kpi"><div class="v">-</div><div class="k">正答率</div></div>
+            <div class="kpi"><div class="v">-</div><div class="k">平均回答時間</div></div>
+            <div class="kpi"><div class="v">-</div><div class="k">弱点教科</div></div>
+          </div>
+
+          <div style="margin-top:12px;" class="radarWrap">
+            <canvas id="radar" width="600" height="420" aria-label="レーダーチャート"></canvas>
+          </div>
+
+          <div style="margin-top:12px;" class="radarWrap">
+            <div id="analysisBox">
+              <b>提出すると</b>、ここに分析が出ます。
+              <ul>
+                <li>教科別：得点・傾向</li>
+                <li>難易度別：得点（基礎/標準/発展）</li>
+                <li>学年別：得点（小/中）</li>
+              </ul>
+              <div class="muted tiny">※番号ボタンで解説は提出後に表示</div>
+            </div>
+          </div>
+
+          <div style="margin-top:12px;">
+            <div class="hd" style="padding:0 0 10px;border:none;">
+              <b>解説ナビ（提出後）</b>
+              <span class="muted tiny">番号クリックで解説</span>
+            </div>
+            <div id="numStrip" aria-label="問題番号"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="hd">
+        <b>クイズ</b>
+        <span class="muted tiny">選択肢をクリックして回答</span>
+      </div>
+      <div class="bd">
+        <div id="quizRoot" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Explanation Modal -->
+  <div id="modalBack" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalSub">
+      <div class="mhd">
+        <div id="modalSub">-</div>
+        <button id="btnCloseModal" class="closeBtn" type="button">閉じる</button>
+      </div>
+      <div id="modalBody" class="mbd"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
 </html>
-
-
-
