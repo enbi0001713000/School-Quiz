@@ -1,14 +1,15 @@
-/* sw.js（全文）
- * 更新したら CACHE_NAME を v+1 にする（超重要）
+/* sw.template.js
+ * Actionsが ba5911c を差し替えて sw.js を生成する。
  */
-const CACHE_NAME = "school-quiz-v11";
+const CACHE_NAME = "school-quiz-ba5911c";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./bank.js",
   "./app.js",
-  "./sw.js"
+  "./sw.js",
+  "./manifest.json"
 ];
 
 self.addEventListener("install", (event) => {
@@ -39,4 +40,3 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
-
