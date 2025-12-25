@@ -1,4 +1,4 @@
-const CACHE_NAME = "school-quiz-v3";
+const CACHE_NAME = "school-quiz-v4";
 const ASSETS = ["./", "./index.html", "./bank.js", "./manifest.json"];
 
 self.addEventListener("install", (event) => {
@@ -20,3 +20,4 @@ self.addEventListener("fetch", (event) => {
     caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
 });
+
