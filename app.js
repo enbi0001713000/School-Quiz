@@ -561,3 +561,500 @@
       const right = document.createElement("div");
       const statusTag = document.createElement("span");
       statusTag.className = "tag warn";
+      statusTag.textContent = "未採点";
+      statusTag.id = `status-${item.id}`;
+
+      const ansTag = document.createElement("span");
+      ansTag.className = "tag";
+      ansTag.textContent = "未回答";
+      ansTag.id = `ans-${item.id}`;
+      right.appendChild(statusTag);
+      right.appendChild(ansTag);
+
+      top.appendChild(left);
+      top.appendChild(right);
+
+      const choices = document.createElement("div");
+      choices.className = "choices";
+
+      item.c.forEach((text, idx) => {
+        const label = document.createElement("label");
+        label.className = "choice";
+        label.innerHTML = `
+          <input type="radio" name="q-${item.id}" value="${idx}" />
+          <div><b>${String.fromCharCode(65 + idx)}.</b> ${escapeHtml(text)}</div>
+        `;
+
+        label.addEventListener("click", () => {
+          if (state.submitted) return;
+          const now = Date.now();
+
+          const prev = state.answers.get(item.id);
+          if (!prev) {
+            state.answers.set(item.id, {
+              choiceIndex: idx,
+              firstAtMs: now,
+              lastAtMs: now,
+              changeCount: 1,
+              timeSpentSec: 0,
+            });
+          } else {
+            prev.choiceIndex = idx;
+            prev.lastAtMs = now;
+            prev.changeCount = (prev.changeCount || 0) + 1;
+          }
+
+          const box = root.querySelector(`.q[data-qid="${item.id}"]`);
+          box.querySelectorAll(".choice").forEach((ch) => ch.classList.remove("selected"));
+          label.classList.add("selected");
+          $("ans-" + item.id).textContent = `回答: ${String.fromCharCode(65 + idx)}`;
+
+          updateProgress();
+        });
+
+        choices.appendChild(label);
+      });
+
+      qEl.appendChild(top);
+      qEl.appendChild(choices);
+      root.appendChild(qEl);
+    }
+  }
+
+  function updateProgress() {
+    const answered = state.answers.size;
+    $("progressPill").textContent = `Answered: ${answered} / 25`;
+    $("btnSubmit").disabled = answered < 25 || state.submitted;
+    if (!state.submitted) renderNumStrip();
+  }
+
+  function renderNumStrip() {
+    const strip = $("numStrip");
+    strip.innerHTML = "";
+    for (const item of state.questions) {
+      const btn = document.createElement("button");
+      btn.textContent = item.no;
+      btn.disabled = !state.submitted;
+      btn.className = "neutral";
+
+      if (state.submitted) {
+        const ok = isCorrect(item.id);
+        btn.className = ok ? "good" : "bad";
+      }
+
+      btn.addEventListener("click", () => {
+        if (!state.submitted) return;
+        openExplanation(item.no);
+      });
+
+      strip.appendChild(btn);
+    }
+  }
+
+  // ===== Timer =====
+  function startTimer() {
+    if (state.timerHandle) clearInterval(state.timerHandle);
+    state.timerHandle = setInterval(() => {
+      state.elapsedSec = Math.floor((Date.now() - state.startedAtMs) / 1000);
+      $("timerPill").textContent = `Time: ${fmtTime(state.elapsedSec)}`;
+    }, 250);
+  }
+
+  // ===== Scoring =====
+  function isCorrect(qid) {
+    const q = state.questions.find((x) => x.id === qid);
+    const a = state.answers.get(qid);
+    if (!q || !a) return false;
+    return a.choiceIndex === q.a;
+  }
+
+  // 放置時間を除外：最初の選択〜最後の選択まで
+  function finalizeTimes() {
+    for (const q of state.questions) {
+      const a = state.answers.get(q.id);
+      if (!a) continue;
+      const first = safeNumber(a.firstAtMs);
+      const last = safeNumber(a.lastAtMs) || first;
+      const sec = first ? Math.max(1, Math.round((last - first) / 1000)) : 0;
+      a.timeSpentSec = sec;
+    }
+  }
+
+  function submit() {
+    if (state.submitted) return;
+    if (state.answers.size < 25) {
+      toast("全問回答してから提出してください");
+      return;
+    }
+
+    finalizeTimes();
+    state.submitted = true;
+
+    $("btnSubmit").disabled = true;
+    $("btnCopy").disabled = false;
+
+    const root = $("quizRoot");
+
+    for (const item of state.questions) {
+      const box = root.querySelector(`.q[data-qid="${item.id}"]`);
+      const choices = Array.from(box.querySelectorAll(".choice"));
+      const radios = Array.from(box.querySelectorAll('input[type="radio"]'));
+      radios.forEach((r) => (r.disabled = true));
+
+      const ans = state.answers.get(item.id);
+      const chosen = ans.choiceIndex;
+      const correct = item.a;
+
+      choices.forEach((ch, idx) => {
+        ch.classList.remove("selected", "correct", "wrong");
+        if (idx === chosen) ch.classList.add("selected");
+        if (idx === correct) ch.classList.add("correct");
+        if (idx === chosen && chosen !== correct) ch.classList.add("wrong");
+      });
+
+      const ok = chosen === correct;
+      const st = $("status-" + item.id);
+      st.className = `tag ${ok ? "good" : "bad"}`;
+      st.textContent = ok ? "正解" : "不正解";
+    }
+
+    renderNumStrip();
+    renderResultsAndAnalysis();
+    toast("採点しました（番号から解説が開けます）");
+  }
+
+  function buildPersonAnalysis({ perQTimes, perQOk, changeCounts, byDiff, bySub }) {
+    const avg = mean(perQTimes);
+    const sd = stdev(perQTimes);
+
+    const okTimes = perQTimes.filter((_, i) => perQOk[i]);
+    const ngTimes = perQTimes.filter((_, i) => !perQOk[i]);
+    const avgOk = mean(okTimes);
+    const avgNg = mean(ngTimes);
+
+    const avgChange = mean(changeCounts);
+    const changeHeavy = avgChange >= 1.8;
+
+    // スピード傾向
+    let speedType = "標準ペース型";
+    if (avg <= 6) speedType = "高速処理型（即断で回す）";
+    else if (avg >= 14) speedType = "熟考型（時間を使って精度を取りに行く）";
+
+    // ムラ
+    let stability = "安定型";
+    if (sd >= 8) stability = "ムラ型（問題相性で時間が跳ねやすい）";
+    else if (sd >= 5) stability = "ややムラあり";
+
+    // 誤答と時間の関係
+    let errorStyle = "バランス型";
+    if (ngTimes.length >= 3) {
+      if (avgNg - avgOk >= 4) errorStyle = "考え込むほど外しやすい（方針迷子になりがち）";
+      else if (avgOk - avgNg >= 4) errorStyle = "直感ミス型（急ぐほど落とす）";
+    }
+
+    // 難易度耐性
+    const acc = (x) => (x.total ? x.correct / x.total : 0);
+    const aB = acc(byDiff["基礎"]);
+    const aS = acc(byDiff["標準"]);
+    const aA = acc(byDiff["発展"]);
+    let diffType = "難易度耐性：良好";
+    if (aA <= aS - 0.25) diffType = "難易度耐性：発展で落ちやすい（解法の型が未固定）";
+    if (aS <= aB - 0.25) diffType = "難易度耐性：標準で落ちやすい（手順の精度を要改善）";
+
+    // 教科偏差
+    const subScores = SUBJECTS.map((s) => bySub[s].correct);
+    const min = Math.min(...subScores);
+    const max = Math.max(...subScores);
+    let subType = "教科バランス：良好";
+    if (max - min >= 3) subType = "教科バランス：得意不得意が大きい（学習配分で伸びる）";
+    else if (max - min === 2) subType = "教科バランス：やや偏りあり";
+
+    // 変更回数（迷い）
+    let decide = "選択の迷い：少なめ";
+    if (changeHeavy) decide = "選択の迷い：多め（見直し癖あり／時間配分に注意）";
+
+    return [
+      `<b>受験スタイル分析（正誤×時間×迷い）</b>`,
+      `・${speedType}`,
+      `・${stability}`,
+      `・${errorStyle}`,
+      `・${diffType}`,
+      `・${subType}`,
+      `・${decide}`,
+      `<span class="muted tiny">指標：平均${Math.round(avg)}秒、時間ばらつき(σ)${Math.round(sd)}秒、正解時${Math.round(avgOk)}秒/不正解時${Math.round(avgNg)}秒、平均変更回数${avgChange.toFixed(2)}回</span>`,
+    ];
+  }
+
+  function renderResultsAndAnalysis() {
+    const bySub = Object.fromEntries(SUBJECTS.map((s) => [s, { correct: 0, total: 0, time: 0 }]));
+    const byDiff = Object.fromEntries(DIFFS.map((d) => [d, { correct: 0, total: 0 }]));
+    const byLvl = Object.fromEntries(LEVELS.map((l) => [l, { correct: 0, total: 0 }]));
+
+    const perQTimes = [];
+    const perQOk = [];
+    const changeCounts = [];
+
+    let totalCorrect = 0;
+    let totalTime = 0;
+
+    for (const q of state.questions) {
+      const a = state.answers.get(q.id);
+      const ok = a.choiceIndex === q.a;
+
+      bySub[q.sub].total++;
+      bySub[q.sub].time += safeNumber(a.timeSpentSec);
+
+      byDiff[q.diff].total++;
+      byLvl[q.level].total++;
+
+      perQTimes.push(safeNumber(a.timeSpentSec));
+      perQOk.push(ok);
+      changeCounts.push(safeNumber(a.changeCount));
+
+      if (ok) {
+        totalCorrect++;
+        bySub[q.sub].correct++;
+        byDiff[q.diff].correct++;
+        byLvl[q.level].correct++;
+      }
+
+      totalTime += safeNumber(a.timeSpentSec);
+    }
+
+    const pct = Math.round((totalCorrect / 25) * 100);
+    const avgTime = Math.round(totalTime / 25);
+
+    const subCorrects = SUBJECTS.map((s) => bySub[s].correct);
+    const minSub = Math.min(...subCorrects);
+    const maxSub = Math.max(...subCorrects);
+
+    const strongest =
+      SUBJECTS.slice().sort((a, b) => bySub[b].correct - bySub[a].correct)[0];
+
+    // ★ 弱点判定：全教科5/5なら「なし」、それ以外で同点ばかりなら「均等」
+    let weakestText = "";
+    if (minSub === 5) {
+      weakestText = "なし（全教科満点）";
+    } else if (maxSub === minSub) {
+      weakestText = "均等（教科差なし）";
+    } else {
+      const weakest = SUBJECTS.slice().sort((a, b) => bySub[a].correct - bySub[b].correct)[0];
+      weakestText = `${weakest}（${bySub[weakest].correct}/5）`;
+    }
+
+    // KPI
+    $("kpiGrid").innerHTML = "";
+    const kpis = [
+      { v: `${totalCorrect} / 25`, k: "総合スコア" },
+      { v: `${pct}%`, k: "正答率" },
+      { v: `${avgTime}秒/問`, k: "平均回答時間" },
+      { v: weakestText, k: "弱点教科" },
+    ];
+    for (const x of kpis) {
+      const el = document.createElement("div");
+      el.className = "kpi";
+      el.innerHTML = `<div class="v">${escapeHtml(x.v)}</div><div class="k">${escapeHtml(x.k)}</div>`;
+      $("kpiGrid").appendChild(el);
+    }
+
+    // Analysis text
+    const lines = [];
+    lines.push(`<b>分析サマリ</b>`);
+    lines.push(`強み：<b>${escapeHtml(strongest)}</b> ／ 弱点：<b>${escapeHtml(weakestText)}</b>`);
+    lines.push(`<div class="hr"></div>`);
+
+    lines.push(`<b>教科別</b>`);
+    for (const s of SUBJECTS) {
+      lines.push(`・${escapeHtml(s)}：${bySub[s].correct}/5（平均 ${Math.round(bySub[s].time / 5)}秒/問）`);
+    }
+
+    lines.push(`<div class="hr"></div>`);
+    lines.push(`<b>難易度別</b>`);
+    for (const d of DIFFS) {
+      const t = byDiff[d].total || 1;
+      lines.push(`・${escapeHtml(d)}：${byDiff[d].correct}/${byDiff[d].total}（${Math.round((byDiff[d].correct / t) * 100)}%）`);
+    }
+
+    lines.push(`<div class="hr"></div>`);
+    lines.push(`<b>学年別</b>`);
+    for (const l of LEVELS) {
+      const t = byLvl[l].total || 1;
+      lines.push(`・${escapeHtml(l)}：${byLvl[l].correct}/${byLvl[l].total}（${Math.round((byLvl[l].correct / t) * 100)}%）`);
+    }
+
+    lines.push(`<div class="hr"></div>`);
+    lines.push(...buildPersonAnalysis({ perQTimes, perQOk, changeCounts, byDiff, bySub }));
+
+    $("analysisBox").innerHTML = lines.join("<br>");
+
+    // Radar
+    drawRadar(SUBJECTS.map((s) => bySub[s].correct));
+  }
+
+  function destroyChart() {
+    if (state.chart) {
+      state.chart.destroy();
+      state.chart = null;
+    }
+  }
+
+  function drawRadar(scores) {
+    const canvas = $("radar");
+    destroyChart();
+
+    if (!window.Chart) {
+      toast("Chart.js が読み込めないため、レーダーチャートを省略しました");
+      return;
+    }
+
+    state.chart = new Chart(canvas, {
+      type: "radar",
+      data: {
+        labels: SUBJECTS,
+        datasets: [
+          {
+            label: "得点（各5点満点）",
+            data: scores,
+            fill: true,
+            borderWidth: 2,
+            pointRadius: 3,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          r: {
+            min: 0,
+            max: 5,
+            ticks: { stepSize: 1 },
+            pointLabels: { font: { size: 12, weight: "600" } },
+          },
+        },
+      },
+    });
+  }
+
+  // ===== Explanation Modal =====
+  function openExplanation(no) {
+    const item = state.questions.find((x) => x.no === no);
+    if (!item) return;
+
+    const ans = state.answers.get(item.id);
+    const yourIdx = ans?.choiceIndex;
+    const correctIdx = item.a;
+
+    const your =
+      yourIdx === undefined
+        ? "未回答"
+        : `${String.fromCharCode(65 + yourIdx)}. ${item.c[yourIdx]}`;
+    const corr = `${String.fromCharCode(65 + correctIdx)}. ${item.c[correctIdx]}`;
+    const ok = yourIdx === correctIdx;
+
+    $("modalSub").textContent = `Q${item.no} / ${item.sub} / ${item.level} / ${item.diff} / ${ok ? "正解" : "不正解"}`;
+    $("modalBody").innerHTML = `
+      <div style="font-weight:900;font-size:16px;">${escapeHtml(item.q)}</div>
+      <div class="hr"></div>
+      <div><b>あなたの回答：</b> ${escapeHtml(your)}</div>
+      <div><b>正解：</b> ${escapeHtml(corr)}</div>
+      <div class="hr"></div>
+      <div><b>解説：</b><br>${escapeHtml(item.exp)}</div>
+      <div class="hr"></div>
+      <div class="muted tiny">※提出後のみ閲覧可</div>
+    `;
+
+    $("modalBack").style.display = "flex";
+    $("modalBack").setAttribute("aria-hidden", "false");
+  }
+
+  function closeModal() {
+    $("modalBack").style.display = "none";
+    $("modalBack").setAttribute("aria-hidden", "true");
+  }
+
+  // ===== Copy Results =====
+  async function copyResults() {
+    if (!state.submitted) {
+      toast("提出後にコピーできます");
+      return;
+    }
+
+    let totalCorrect = 0;
+    for (const q of state.questions) if (isCorrect(q.id)) totalCorrect++;
+
+    const lines = [];
+    lines.push("【義務教育5教科クイズ 結果】");
+    lines.push(`Seed: ${state.seed.toString(16)}`);
+    lines.push(`Time: ${fmtTime(state.elapsedSec)}`);
+    lines.push(`Score: ${totalCorrect}/25`);
+    lines.push("");
+
+    for (const q of state.questions) {
+      const a = state.answers.get(q.id);
+      const your = String.fromCharCode(65 + a.choiceIndex);
+      const corr = String.fromCharCode(65 + q.a);
+      const ok = your === corr ? "〇" : "×";
+      lines.push(`Q${q.no} [${q.sub}/${q.level}/${q.diff}] ${ok} あなた:${your} 正解:${corr}`);
+      lines.push(`  問: ${q.q}`);
+      lines.push(`  解説: ${q.exp}`);
+      lines.push(`  解答時間: ${a.timeSpentSec}秒 / 変更回数: ${a.changeCount}回`);
+      lines.push("");
+    }
+
+    const text = lines.join("\n");
+
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("結果をコピーしました");
+    } catch {
+      const ok = copyTextFallback(text);
+      ok ? toast("結果をコピーしました") : toast("コピーできませんでした");
+    }
+  }
+
+  // ===== Reset =====
+  function resetAnswers() {
+    state.answers = new Map();
+    state.submitted = false;
+
+    $("btnCopy").disabled = true;
+    $("btnSubmit").disabled = true;
+    setKpisPlaceholders();
+    renderAnalysisPlaceholder();
+    destroyChart();
+    renderQuestions();
+    renderNumStrip();
+    updateProgress();
+    toast("回答をリセットしました");
+  }
+
+  // ===== Events =====
+  function wireEvents() {
+    $("btnNew").addEventListener("click", buildQuiz);
+    $("btnReset").addEventListener("click", resetAnswers);
+    $("btnSubmit").addEventListener("click", submit);
+    $("btnCopy").addEventListener("click", copyResults);
+
+    $("btnCloseModal").addEventListener("click", closeModal);
+    $("modalBack").addEventListener("click", (e) => {
+      if (e.target.id === "modalBack") closeModal();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeModal();
+    });
+
+    ["lvlE", "lvlJ", "dB", "dS", "dA"].forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      el.addEventListener("change", () => {
+        toast("設定を変更しました（新しいクイズで反映）");
+      });
+    });
+  }
+
+  // ===== Boot =====
+  if (!ensurePass()) return;
+  wireEvents();
+  buildQuiz();
+})();
