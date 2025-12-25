@@ -1,8 +1,9 @@
-/* app.js（完全版 / 改修済み）
- * 改修点:
- * - 弱点が無い場合は「無し」
- * - 正誤×回答時間×回答変更回数から学習傾向を分析
- * - bank.js の pattern が無くても key 接頭辞から推定して出題偏りを抑制（前回実装維持）
+/* app.js（改修版）
+ * 改修:
+ * 1) 弱点教科：全教科満点(5/5)なら「なし」
+ * 2) 回答時間の計測を改善：firstAtMs〜lastAtMs（放置時間を除外）
+ * 3) 正誤×時間×難易度の傾向から「受験スタイル分析」を出力
+ * 4) 出題重複ゼロ＋似た型の偏り抑制（前回実装を維持）
  */
 
 (() => {
@@ -80,17 +81,6 @@
     return Number.isFinite(n) ? n : 0;
   }
 
-  function median(nums) {
-    const a = nums.filter((x) => Number.isFinite(x)).slice().sort((x, y) => x - y);
-    if (!a.length) return 0;
-    const mid = Math.floor(a.length / 2);
-    return a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2;
-  }
-
-  function clamp(n, lo, hi) {
-    return Math.max(lo, Math.min(hi, n));
-  }
-
   function copyTextFallback(text) {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -116,6 +106,17 @@
     return Array.from(a)
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
+  }
+
+  function mean(arr) {
+    if (!arr.length) return 0;
+    return arr.reduce((s, x) => s + x, 0) / arr.length;
+  }
+  function stdev(arr) {
+    if (arr.length < 2) return 0;
+    const m = mean(arr);
+    const v = mean(arr.map((x) => (x - m) ** 2));
+    return Math.sqrt(v);
   }
 
   // ===== Gate =====
@@ -189,7 +190,8 @@
     rng: null,
     bank: [],
     questions: [],
-    answers: new Map(), // qid -> {choiceIndex, startedAtMs, timeSpentSec, changes}
+    // answers: qid -> {choiceIndex, firstAtMs, lastAtMs, changeCount, timeSpentSec}
+    answers: new Map(),
     submitted: false,
     startedAtMs: 0,
     elapsedSec: 0,
@@ -231,7 +233,7 @@
     return true;
   }
 
-  // ===== 出題偏り抑制（前回実装） =====
+  // ===== Pattern inference / constraints =====
   function getPattern(q) {
     if (q.pattern) return String(q.pattern);
     const k = String(q.key || "");
@@ -275,13 +277,12 @@
     for (const mode of modes) {
       for (const q of shuffled) {
         if (!q) continue;
-        if (usedKeys.has(q.key)) continue;
 
+        if (usedKeys.has(q.key)) continue;
         const sig = normalizeText(q.q);
         if (usedTextSig.has(sig)) continue;
 
         const pat = getPattern(q);
-
         if (mode !== "free") {
           const subMap = subPatternCount.get(subject) || new Map();
           const subCnt = subMap.get(pat) || 0;
@@ -290,8 +291,7 @@
           if (mode === "strict") {
             if (subCnt >= limits.maxPerSubjectPattern) continue;
             if (glbCnt >= limits.maxGlobalPattern) continue;
-          }
-          if (mode === "relaxed") {
+          } else {
             if (subCnt >= limits.maxPerSubjectPatternRelaxed) continue;
             if (glbCnt >= limits.maxGlobalPattern) continue;
           }
@@ -300,12 +300,10 @@
         usedKeys.add(q.key);
         usedTextSig.add(sig);
 
-        const pat2 = getPattern(q);
         const subMap2 = subPatternCount.get(subject) || new Map();
-        subMap2.set(pat2, (subMap2.get(pat2) || 0) + 1);
+        subMap2.set(pat, (subMap2.get(pat) || 0) + 1);
         subPatternCount.set(subject, subMap2);
-
-        globalPatternCount.set(pat2, (globalPatternCount.get(pat2) || 0) + 1);
+        globalPatternCount.set(pat, (globalPatternCount.get(pat) || 0) + 1);
 
         return q;
       }
@@ -326,7 +324,6 @@
     limits,
   }) {
     const chosen = [];
-
     const desired = [];
     for (const d of DIFFS) for (let i = 0; i < (plan[d] || 0); i++) desired.push(d);
     const desiredOrder = shuffle(desired, rng);
@@ -337,14 +334,7 @@
         (q) => q.sub === subject && q.diff === diff && filters.lvls.includes(q.level)
       );
       const q1 = pickOneWithConstraints({
-        pool,
-        rng,
-        usedKeys,
-        usedTextSig,
-        subPatternCount,
-        globalPatternCount,
-        limits,
-        subject,
+        pool, rng, usedKeys, usedTextSig, subPatternCount, globalPatternCount, limits, subject
       });
       if (q1) chosen.push({ ...q1, id: cryptoId() });
       if (chosen.length >= 5) break;
@@ -358,31 +348,17 @@
           filters.diffs.includes(q.diff)
       );
       const q2 = pickOneWithConstraints({
-        pool: pool2,
-        rng,
-        usedKeys,
-        usedTextSig,
-        subPatternCount,
-        globalPatternCount,
-        limits,
-        subject,
+        pool: pool2, rng, usedKeys, usedTextSig, subPatternCount, globalPatternCount, limits, subject
       });
       if (!q2) break;
       chosen.push({ ...q2, id: cryptoId() });
     }
 
     while (chosen.length < 5) {
-      toast(`設定の都合で ${subject} の難易度を一部緩和して補填しました`);
+      toast(`設定の都合で ${subject} の条件を一部緩和して補填しました`);
       const pool3 = bank.filter((q) => q.sub === subject && filters.lvls.includes(q.level));
       const q3 = pickOneWithConstraints({
-        pool: pool3,
-        rng,
-        usedKeys,
-        usedTextSig,
-        subPatternCount,
-        globalPatternCount,
-        limits,
-        subject,
+        pool: pool3, rng, usedKeys, usedTextSig, subPatternCount, globalPatternCount, limits, subject
       });
       if (!q3) break;
       chosen.push({ ...q3, id: cryptoId() });
@@ -392,14 +368,7 @@
       toast(`プール不足：${subject} を同教科から最終補填しました`);
       const pool4 = bank.filter((q) => q.sub === subject);
       const q4 = pickOneWithConstraints({
-        pool: pool4,
-        rng,
-        usedKeys,
-        usedTextSig,
-        subPatternCount,
-        globalPatternCount,
-        limits,
-        subject,
+        pool: pool4, rng, usedKeys, usedTextSig, subPatternCount, globalPatternCount, limits, subject
       });
       if (!q4) break;
       chosen.push({ ...q4, id: cryptoId() });
@@ -442,4 +411,153 @@
     $("btnSubmit").disabled = true;
     $("btnCopy").disabled = true;
 
-    setK
+    setKpisPlaceholders();
+    renderAnalysisPlaceholder();
+    destroyChart();
+    $("numStrip").innerHTML = "";
+    $("quizRoot").innerHTML = "";
+
+    const filters = getFilters();
+
+    const limits = {
+      maxPerSubjectPattern: 2,
+      maxPerSubjectPatternRelaxed: 3,
+      maxGlobalPattern: 6,
+    };
+
+    const usedKeys = new Set();
+    const usedTextSig = new Set();
+    const subPatternCount = new Map();
+    const globalPatternCount = new Map();
+
+    const planBySub = diffPlanPerSubject(rng);
+
+    let picked = [];
+    for (const sub of SUBJECTS) {
+      const plan = planBySub[sub];
+      const five = pickFiveForSubject({
+        subject: sub,
+        bank: state.bank,
+        rng,
+        filters,
+        plan,
+        usedKeys,
+        usedTextSig,
+        subPatternCount,
+        globalPatternCount,
+        limits,
+      });
+      picked = picked.concat(five);
+    }
+
+    picked = uniqueByKey(picked);
+
+    while (picked.length < 25) {
+      toast("プール不足のため全教科から補填しています");
+      const pool = state.bank.filter(
+        (q) => filters.lvls.includes(q.level) && filters.diffs.includes(q.diff)
+      );
+      const q = pickOneWithConstraints({
+        pool,
+        rng,
+        usedKeys,
+        usedTextSig,
+        subPatternCount,
+        globalPatternCount,
+        limits: { ...limits, maxPerSubjectPattern: 3, maxPerSubjectPatternRelaxed: 4, maxGlobalPattern: 8 },
+        subject: "補填",
+      });
+      if (!q) break;
+      picked.push({ ...q, id: cryptoId() });
+      picked = uniqueByKey(picked);
+    }
+
+    picked = shuffle(picked, rng).slice(0, 25).map((q, i) => ({
+      ...q,
+      no: i + 1,
+    }));
+
+    picked = uniqueByKey(picked);
+    if (picked.length < 25) {
+      const hardLimits = { maxPerSubjectPattern: 4, maxPerSubjectPatternRelaxed: 5, maxGlobalPattern: 10 };
+      while (picked.length < 25) {
+        const pool = state.bank.filter((q) => filters.lvls.includes(q.level));
+        const q = pickOneWithConstraints({
+          pool,
+          rng,
+          usedKeys,
+          usedTextSig,
+          subPatternCount,
+          globalPatternCount,
+          limits: hardLimits,
+          subject: "補填",
+        });
+        if (!q) break;
+        picked.push({ ...q, id: cryptoId(), no: picked.length + 1 });
+        picked = uniqueByKey(picked);
+      }
+      picked = picked.slice(0, 25).map((q, i) => ({ ...q, no: i + 1 }));
+    }
+
+    if (picked.length < 25) {
+      toast("問題数が不足しています。bank.js の問題数（固定データ/テンプレ）を増やしてください。");
+    }
+
+    state.questions = picked;
+
+    renderQuestions();
+    renderNumStrip();
+    startTimer();
+    updateProgress();
+    toast("新しいクイズを生成しました（重複ゼロ＆偏り抑制）");
+  }
+
+  // ===== Rendering =====
+  function setKpisPlaceholders() {
+    const k = $("kpiGrid");
+    k.innerHTML = `
+      <div class="kpi"><div class="v">-</div><div class="k">総合スコア</div></div>
+      <div class="kpi"><div class="v">-</div><div class="k">正答率</div></div>
+      <div class="kpi"><div class="v">-</div><div class="k">平均回答時間</div></div>
+      <div class="kpi"><div class="v">-</div><div class="k">弱点教科</div></div>
+    `;
+  }
+
+  function renderAnalysisPlaceholder() {
+    $("analysisBox").innerHTML = `
+      <b>提出すると</b>、ここに分析が出ます。
+      <ul>
+        <li>教科別：得点・傾向</li>
+        <li>難易度別：得点（基礎/標準/発展）</li>
+        <li>学年別：得点（小/中）</li>
+        <li>正誤×時間からの「受験スタイル分析」</li>
+      </ul>
+      <div class="muted tiny">※番号ボタンで解説は提出後に表示</div>
+    `;
+  }
+
+  function renderQuestions() {
+    const root = $("quizRoot");
+    root.innerHTML = "";
+
+    for (const item of state.questions) {
+      const qEl = document.createElement("div");
+      qEl.className = "q";
+      qEl.dataset.qid = item.id;
+
+      const top = document.createElement("div");
+      top.className = "qtop";
+
+      const left = document.createElement("div");
+      left.innerHTML = `
+        <div class="qtitle">Q${item.no}. ${escapeHtml(item.q)}</div>
+        <div class="qmeta">
+          <span class="tag">${escapeHtml(item.sub)}</span>
+          <span class="tag">${escapeHtml(item.level)}</span>
+          <span class="tag">${escapeHtml(item.diff)}</span>
+        </div>
+      `;
+
+      const right = document.createElement("div");
+      const statusTag = document.createElement("span");
+      statusTag.className = "tag warn";
