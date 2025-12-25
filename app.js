@@ -1,1060 +1,819 @@
-/* app.js（改修版）
- * 改修:
- * 1) 弱点教科：全教科満点(5/5)なら「なし」
- * 2) 回答時間の計測を改善：firstAtMs〜lastAtMs（放置時間を除外）
- * 3) 正誤×時間×難易度の傾向から「受験スタイル分析」を出力
- * 4) 出題重複ゼロ＋似た型の偏り抑制（前回実装を維持）
+/* app.js（全文）
+ * - 合言葉 0217（localStorageで解錠）
+ * - 25問（各教科5問）をタグフィルタ＋パターン分散で抽出
+ * - クリックで解答、時間計測（問題ごと累積）
+ * - 結果：全体・教科・難易度・pattern別、レーダー
+ * - AI文章分析：正誤×時間×patternから“傾向”を自然文に整形（ローカル）
  */
 
 (() => {
   "use strict";
 
-  // ===== PWA (Service Worker) =====
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js").catch(() => {});
-    });
-  }
-
-  // ===== Constants =====
-  const PASSPHRASE = "0217";
-  const SUBJECTS = ["国語", "数学", "英語", "理科", "社会"];
-  const DIFFS = ["基礎", "標準", "発展"];
-  const LEVELS = ["小", "中"];
-
-  // ===== Utilities =====
+  // ===== DOM =====
   const $ = (id) => document.getElementById(id);
 
-  function mulberry32(seed) {
-    let t = seed >>> 0;
-    return function () {
-      t += 0x6d2b79f5;
-      let r = Math.imul(t ^ (t >>> 15), 1 | t);
-      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
-      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-    };
-  }
+  const unlockCard = $("unlockCard");
+  const settingsCard = $("settingsCard");
+  const quizCard = $("quizCard");
+  const resultCard = $("resultCard");
 
-  function hashSeed(str) {
+  const passInput = $("passInput");
+  const btnUnlock = $("btnUnlock");
+  const unlockMsg = $("unlockMsg");
+
+  const btnNew = $("btnNew");
+  const btnReset = $("btnReset");
+  const btnGrade = $("btnGrade");
+
+  const btnPrev = $("btnPrev");
+  const btnNext = $("btnNext");
+
+  const qIndex = $("qIndex");
+  const qTags = $("qTags");
+  const qText = $("qText");
+  const choices = $("choices");
+  const timerNow = $("timerNow");
+  const progressBar = $("progressBar");
+
+  const scoreLine = $("scoreLine");
+  const breakdown = $("breakdown");
+  const explainList = $("explainList");
+  const aiAnalysis = $("aiAnalysis");
+
+  const btnCopy = $("btnCopy");
+  const btnBackToTop = $("btnBackToTop");
+
+  const radar = $("radar");
+  const ctx = radar.getContext("2d");
+
+  // ===== Settings =====
+  const PASSPHRASE_HASH = hash("0217"); // 生の文字列は極力露出しない（完全秘匿ではないが“見つけにくい”）
+  const LS_UNLOCK = "schoolQuizUnlocked_v1";
+
+  const state = {
+    bankAll: [],
+    quiz: [],
+    answers: [], // { chosen: number|null, correctIndex:number, isCorrect:boolean|null, timeMs:number, visits:number }
+    i: 0,
+    startedAt: 0,
+    qShownAt: 0,
+    timerT: null,
+    unlocked: false,
+  };
+
+  function hash(s) {
+    // FNV-1a 32bit
     let h = 2166136261 >>> 0;
-    for (let i = 0; i < str.length; i++) {
-      h ^= str.charCodeAt(i);
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
       h = Math.imul(h, 16777619);
     }
     return h >>> 0;
   }
 
-  function shuffle(arr, rng) {
-    const a = arr.slice();
-    for (let i = a.length - 1; i > 0; i--) {
-      const j = Math.floor(rng() * (i + 1));
-      [a[i], a[j]] = [a[j], a[i]];
-    }
-    return a;
-  }
+  function now() { return performance.now(); }
 
-  function fmtTime(sec) {
-    const m = String(Math.floor(sec / 60)).padStart(2, "0");
-    const s = String(sec % 60).padStart(2, "0");
-    return `${m}:${s}`;
-  }
+  function fmtSec(ms) { return (ms / 1000).toFixed(1) + "s"; }
 
-  function escapeHtml(s) {
-    return String(s)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#39;");
-  }
-
-  function toast(msg) {
-    const el = $("toast");
-    if (!el) return;
-    el.textContent = msg;
-    el.style.display = "block";
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => (el.style.display = "none"), 1700);
-  }
-
-  function safeNumber(n) {
-    return Number.isFinite(n) ? n : 0;
-  }
-
-  function copyTextFallback(text) {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.left = "-9999px";
-    ta.style.top = "-9999px";
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    try {
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-      return true;
-    } catch {
-      document.body.removeChild(ta);
-      return false;
+  function setUnlockedUI(on) {
+    state.unlocked = on;
+    btnNew.disabled = !on;
+    // まだクイズが無いなら他はdisabled
+    if (!state.quiz.length) {
+      btnReset.disabled = true;
+      btnGrade.disabled = true;
     }
   }
 
-  function cryptoId() {
-    const a = new Uint8Array(8);
-    crypto.getRandomValues(a);
-    return Array.from(a)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+  function readTags(selector) {
+    return [...document.querySelectorAll(selector)]
+      .filter(x => x.checked)
+      .map(x => x.value);
   }
 
-  function mean(arr) {
-    if (!arr.length) return 0;
-    return arr.reduce((s, x) => s + x, 0) / arr.length;
-  }
-  function stdev(arr) {
-    if (arr.length < 2) return 0;
-    const m = mean(arr);
-    const v = mean(arr.map((x) => (x - m) ** 2));
-    return Math.sqrt(v);
-  }
-
-  // ===== Gate =====
-  function renderGate() {
-    document.body.innerHTML = `
-      <div style="max-width:760px;margin:70px auto;padding:18px;font-family:system-ui;color:#0B1B3A;">
-        <div style="padding:18px;border:1px solid rgba(11,27,58,.18);border-radius:16px;background:rgba(255,255,255,.78);
-                    box-shadow:0 14px 36px rgba(11,27,58,.12);">
-          <h2 style="margin:0 0 10px;">合言葉が必要です</h2>
-          <p style="margin:0 0 14px;color:rgba(11,27,58,.70);">
-            このクイズは合言葉を知っている人だけ遊べます。
-          </p>
-
-          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <input id="pw" inputmode="numeric" placeholder="合言葉（4桁）"
-                   style="padding:12px 14px;border-radius:12px;border:1px solid rgba(11,27,58,.20);
-                          background:rgba(255,255,255,.85);color:#0B1B3A;font-size:16px;outline:none;">
-            <button id="enter"
-                    style="padding:12px 14px;border-radius:12px;border:1px solid rgba(11,27,58,.28);
-                           background:rgba(11,27,58,.86);color:#fff;font-weight:900;cursor:pointer;">
-              入室
-            </button>
-          </div>
-
-          <div id="msg" style="margin-top:10px;color:rgba(220,53,69,.95);display:none;font-weight:900;">
-            合言葉が違います。
-          </div>
-
-          <hr style="border:none;height:1px;background:rgba(11,27,58,.14);margin:16px 0;">
-          <div style="font-size:12px;color:rgba(11,27,58,.65);">
-            ※同じタブでは通過状態を保持（タブを閉じると再入力）。
-          </div>
-        </div>
-      </div>
-    `;
-
-    const input = document.getElementById("pw");
-    const btn = document.getElementById("enter");
-    const msg = document.getElementById("msg");
-
-    function tryEnter() {
-      if (input.value === PASSPHRASE) {
-        sessionStorage.setItem("quiz_passed", "1");
-        location.reload();
-      } else {
-        msg.style.display = "block";
-        input.select();
-      }
+  // ===== Unlock =====
+  function loadUnlock() {
+    const v = localStorage.getItem(LS_UNLOCK);
+    if (v === "1") {
+      unlockCard.hidden = true;
+      setUnlockedUI(true);
+      loadBank();
+    } else {
+      unlockCard.hidden = false;
+      setUnlockedUI(false);
     }
-    btn.addEventListener("click", tryEnter);
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") tryEnter();
-    });
-    input.focus();
   }
 
-  function ensurePass() {
-    const forceGate = new URLSearchParams(location.search).get("gate") === "1";
-    const passed = sessionStorage.getItem("quiz_passed") === "1";
-    if (forceGate || !passed) {
-      renderGate();
-      return false;
+  btnUnlock.addEventListener("click", () => {
+    const entered = (passInput.value || "").trim();
+    if (!entered) {
+      unlockMsg.textContent = "合言葉を入力してください。";
+      unlockMsg.style.color = "#b91c1c";
+      return;
     }
-    return true;
-  }
-
-  // ===== State =====
-  const state = {
-    seedStr: "",
-    seed: 0,
-    rng: null,
-    bank: [],
-    questions: [],
-    // answers: qid -> {choiceIndex, firstAtMs, lastAtMs, changeCount, timeSpentSec}
-    answers: new Map(),
-    submitted: false,
-    startedAtMs: 0,
-    elapsedSec: 0,
-    timerHandle: null,
-    chart: null,
-  };
-
-  // ===== Filters =====
-  function getFilters() {
-    const lvls = [];
-    if ($("lvlE")?.checked) lvls.push("小");
-    if ($("lvlJ")?.checked) lvls.push("中");
-
-    const diffs = [];
-    if ($("dB")?.checked) diffs.push("基礎");
-    if ($("dS")?.checked) diffs.push("標準");
-    if ($("dA")?.checked) diffs.push("発展");
-
-    if (lvls.length === 0) {
-      lvls.push("小", "中");
-      toast("学年が全OFFだったため、小＋中で出題します");
+    if (hash(entered) === PASSPHRASE_HASH) {
+      localStorage.setItem(LS_UNLOCK, "1");
+      unlockMsg.textContent = "解除しました。上の「新しいクイズ」から開始できます。";
+      unlockMsg.style.color = "#1b7f4b";
+      unlockCard.hidden = true;
+      setUnlockedUI(true);
+      loadBank();
+    } else {
+      unlockMsg.textContent = "合言葉が違います。";
+      unlockMsg.style.color = "#b91c1c";
     }
-    if (diffs.length === 0) {
-      diffs.push("基礎", "標準", "発展");
-      toast("難易度が全OFFだったため、基礎＋標準＋発展で出題します");
-    }
-    return { lvls, diffs };
-  }
+  });
 
-  // ===== Bank =====
-  function ensureBankLoaded() {
+  // ===== Load bank =====
+  function loadBank() {
     if (!window.SchoolQuizBank) {
-      alert("bank.js が読み込めていません（SchoolQuizBank未定義）");
-      return false;
+      unlockMsg.textContent = "bank.js の読み込みに失敗しています。";
+      unlockMsg.style.color = "#b91c1c";
+      return;
     }
-    if (!state.bank.length) {
-      state.bank = window.SchoolQuizBank.buildAll(500);
+    state.bankAll = window.SchoolQuizBank.buildAll(500);
+  }
+
+  // ===== Quiz generation (25 questions, 5 per subject) =====
+  function groupBy(arr, keyFn) {
+    const m = new Map();
+    for (const x of arr) {
+      const k = keyFn(x);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(x);
     }
-    return true;
+    return m;
   }
 
-  // ===== Pattern inference / constraints =====
-  function getPattern(q) {
-    if (q.pattern) return String(q.pattern);
-    const k = String(q.key || "");
-    const parts = k.split("_").filter(Boolean);
-    if (parts.length >= 2) return `${parts[0]}_${parts[1]}`;
-    return parts[0] || "unknown";
-  }
+  function sampleDistinct(pool, n, opts) {
+    // opts: { strictUnique:boolean, avoidSimilar:boolean }
+    // strategy: prioritize pattern diversity and avoid repeating same pattern too often
+    const strictUnique = !!opts.strictUnique;
+    const avoidSimilar = !!opts.avoidSimilar;
 
-  function normalizeText(s) {
-    return String(s || "")
-      .replace(/\s+/g, "")
-      .replace(/[、。．，,.!?！？「」『』（）()\[\]【】]/g, "")
-      .slice(0, 60);
-  }
+    const picked = [];
+    const usedKey = new Set();
+    const patternCount = new Map();
 
-  function diffPlanPerSubject(rng) {
-    const pickTwo = shuffle(SUBJECTS, rng).slice(0, 2);
-    const setTwo = new Set(pickTwo);
-    const plan = {};
-    for (const s of SUBJECTS) {
-      plan[s] = setTwo.has(s)
-        ? { 基礎: 1, 標準: 3, 発展: 1 }
-        : { 基礎: 1, 標準: 2, 発展: 2 };
+    // shuffle copy
+    const rng = Math.random;
+    const shuffled = pool.slice().sort(() => rng() - 0.5);
+
+    function score(q) {
+      const p = q.pattern || "misc";
+      const c = patternCount.get(p) || 0;
+      // lower count => higher score
+      return -c + (Math.random() * 0.05);
     }
-    return plan;
-  }
 
-  function pickOneWithConstraints({
-    pool,
-    rng,
-    usedKeys,
-    usedTextSig,
-    subPatternCount,
-    globalPatternCount,
-    limits,
-    subject,
-  }) {
-    const shuffled = shuffle(pool, rng);
-    const modes = ["strict", "relaxed", "free"];
+    while (picked.length < n) {
+      // candidates not used
+      let cands = shuffled.filter(q => !strictUnique || !usedKey.has(q.key));
+      if (!cands.length) break;
 
-    for (const mode of modes) {
-      for (const q of shuffled) {
-        if (!q) continue;
-
-        if (usedKeys.has(q.key)) continue;
-        const sig = normalizeText(q.q);
-        if (usedTextSig.has(sig)) continue;
-
-        const pat = getPattern(q);
-        if (mode !== "free") {
-          const subMap = subPatternCount.get(subject) || new Map();
-          const subCnt = subMap.get(pat) || 0;
-          const glbCnt = globalPatternCount.get(pat) || 0;
-
-          if (mode === "strict") {
-            if (subCnt >= limits.maxPerSubjectPattern) continue;
-            if (glbCnt >= limits.maxGlobalPattern) continue;
-          } else {
-            if (subCnt >= limits.maxPerSubjectPatternRelaxed) continue;
-            if (glbCnt >= limits.maxGlobalPattern) continue;
-          }
-        }
-
-        usedKeys.add(q.key);
-        usedTextSig.add(sig);
-
-        const subMap2 = subPatternCount.get(subject) || new Map();
-        subMap2.set(pat, (subMap2.get(pat) || 0) + 1);
-        subPatternCount.set(subject, subMap2);
-        globalPatternCount.set(pat, (globalPatternCount.get(pat) || 0) + 1);
-
-        return q;
+      if (avoidSimilar) {
+        cands = cands.sort((a, b) => score(b) - score(a));
       }
+
+      const q = cands[0];
+      if (!q) break;
+
+      picked.push(q);
+      usedKey.add(q.key);
+      const p = q.pattern || "misc";
+      patternCount.set(p, (patternCount.get(p) || 0) + 1);
     }
-    return null;
+
+    return picked;
   }
 
-  function pickFiveForSubject({
-    subject,
-    bank,
-    rng,
-    filters,
-    plan,
-    usedKeys,
-    usedTextSig,
-    subPatternCount,
-    globalPatternCount,
-    limits,
-  }) {
-    const chosen = [];
-    const desired = [];
-    for (const d of DIFFS) for (let i = 0; i < (plan[d] || 0); i++) desired.push(d);
-    const desiredOrder = shuffle(desired, rng);
+  function stratifiedByDifficulty(pool, need, diffWanted) {
+    // diffWanted = ["基礎","標準","発展"] subset
+    const byDiff = groupBy(pool, q => q.diff || "標準");
+    const pickFrom = (d) => (byDiff.get(d) || []);
+    // 2:5:3 の比率目安
+    const b = Math.round(need * 0.2);
+    const s = Math.round(need * 0.5);
+    const a = Math.max(0, need - b - s);
 
-    for (const diff of desiredOrder) {
-      if (!filters.diffs.includes(diff)) continue;
-      const pool = bank.filter(
-        (q) => q.sub === subject && q.diff === diff && filters.lvls.includes(q.level)
-      );
-      const q1 = pickOneWithConstraints({
-        pool, rng, usedKeys, usedTextSig, subPatternCount, globalPatternCount, limits, subject
-      });
-      if (q1) chosen.push({ ...q1, id: cryptoId() });
-      if (chosen.length >= 5) break;
-    }
+    const want = { 基礎: b, 標準: s, 発展: a };
+    // ただし diffWanted で弾かれるので、無い分は他に回す
+    const diffs = ["基礎","標準","発展"].filter(d => diffWanted.includes(d));
 
-    while (chosen.length < 5) {
-      const pool2 = bank.filter(
-        (q) =>
-          q.sub === subject &&
-          filters.lvls.includes(q.level) &&
-          filters.diffs.includes(q.diff)
-      );
-      const q2 = pickOneWithConstraints({
-        pool: pool2, rng, usedKeys, usedTextSig, subPatternCount, globalPatternCount, limits, subject
-      });
-      if (!q2) break;
-      chosen.push({ ...q2, id: cryptoId() });
-    }
-
-    while (chosen.length < 5) {
-      toast(`設定の都合で ${subject} の条件を一部緩和して補填しました`);
-      const pool3 = bank.filter((q) => q.sub === subject && filters.lvls.includes(q.level));
-      const q3 = pickOneWithConstraints({
-        pool: pool3, rng, usedKeys, usedTextSig, subPatternCount, globalPatternCount, limits, subject
-      });
-      if (!q3) break;
-      chosen.push({ ...q3, id: cryptoId() });
-    }
-
-    while (chosen.length < 5) {
-      toast(`プール不足：${subject} を同教科から最終補填しました`);
-      const pool4 = bank.filter((q) => q.sub === subject);
-      const q4 = pickOneWithConstraints({
-        pool: pool4, rng, usedKeys, usedTextSig, subPatternCount, globalPatternCount, limits, subject
-      });
-      if (!q4) break;
-      chosen.push({ ...q4, id: cryptoId() });
-    }
-
-    return chosen.slice(0, 5);
-  }
-
-  function uniqueByKey(arr) {
-    const seen = new Set();
     const out = [];
-    for (const q of arr) {
+    for (const d of ["基礎","標準","発展"]) {
+      if (!diffWanted.includes(d)) continue;
+      out.push(...pickFrom(d).slice(0, want[d] + 3)); // 少し余裕
+    }
+    // 候補不足時の保険：diffWanted内で全追加
+    if (out.length < need * 3) {
+      for (const d of diffs) out.push(...pickFrom(d));
+    }
+    // 重複キー除去
+    const seen = new Set();
+    const uniq = [];
+    for (const q of out) {
       if (seen.has(q.key)) continue;
       seen.add(q.key);
-      out.push(q);
+      uniq.push(q);
+    }
+    return uniq;
+  }
+
+  function buildQuiz() {
+    const levels = readTags(".tagLevel");
+    const diffs = readTags(".tagDiff");
+    const strictUnique = $("strictUnique").checked;
+    const avoidSimilar = $("avoidSimilar").checked;
+    const mixDifficulty = $("mixDifficulty").checked;
+
+    const subjects = ["国語","数学","英語","理科","社会"];
+
+    const filtered = state.bankAll.filter(q =>
+      subjects.includes(q.sub) &&
+      (levels.length ? levels.includes(q.level) : true) &&
+      (diffs.length ? diffs.includes(q.diff) : true)
+    );
+
+    const bySub = groupBy(filtered, q => q.sub);
+    const quiz = [];
+    const globalUsed = new Set();
+
+    for (const sub of subjects) {
+      let pool = (bySub.get(sub) || []).slice();
+
+      // 難易度配分をなるべく維持：教科5問でも2:5:3を“寄せる”
+      // 5問の場合：基礎1 / 標準3 / 発展1 を目標
+      if (mixDifficulty) {
+        const candidates = stratifiedByDifficulty(pool, 5, diffs.length ? diffs : ["基礎","標準","発展"]);
+        pool = candidates.length ? candidates : pool;
+      }
+
+      // グローバル重複禁止（教科内だけでなく全体でも）
+      pool = pool.filter(q => !globalUsed.has(q.key));
+
+      const picked = sampleDistinct(pool, 5, { strictUnique, avoidSimilar });
+      for (const q of picked) globalUsed.add(q.key);
+      quiz.push(...picked);
+    }
+
+    // 25問に不足する場合（フィルタが厳しすぎる等）
+    if (quiz.length < 25) {
+      const restPool = filtered.filter(q => !globalUsed.has(q.key));
+      const add = sampleDistinct(restPool, 25 - quiz.length, { strictUnique, avoidSimilar });
+      quiz.push(...add);
+    }
+
+    // 最終：25に整形＆シャッフル（教科順が見えないように）
+    const finalQuiz = quiz.slice(0, 25).sort(() => Math.random() - 0.5);
+
+    // 初期化
+    state.quiz = finalQuiz;
+    state.answers = finalQuiz.map(q => ({
+      chosen: null,
+      correctIndex: q.a,
+      isCorrect: null,
+      timeMs: 0,
+      visits: 0,
+    }));
+    state.i = 0;
+    state.startedAt = now();
+    state.qShownAt = now();
+  }
+
+  // ===== Rendering =====
+  function setVisible(section) {
+    quizCard.hidden = section !== "quiz";
+    resultCard.hidden = section !== "result";
+    // settingsCardは常に見える（トップに戻るときに分かりやすい）
+  }
+
+  function tagPill(text) {
+    const span = document.createElement("span");
+    span.className = "tag";
+    span.textContent = text;
+    return span;
+  }
+
+  function updateTimerUI() {
+    const a = state.answers[state.i];
+    const cur = now();
+    const elapsed = a.timeMs + (cur - state.qShownAt);
+    timerNow.textContent = fmtSec(elapsed);
+  }
+
+  function startTimerTick() {
+    stopTimerTick();
+    state.timerT = setInterval(updateTimerUI, 120);
+  }
+  function stopTimerTick() {
+    if (state.timerT) clearInterval(state.timerT);
+    state.timerT = null;
+  }
+
+  function accumulateTime() {
+    const a = state.answers[state.i];
+    const cur = now();
+    a.timeMs += (cur - state.qShownAt);
+    state.qShownAt = cur;
+  }
+
+  function renderQuestion() {
+    if (!state.quiz.length) return;
+
+    const q = state.quiz[state.i];
+    const a = state.answers[state.i];
+    a.visits += 1;
+
+    qIndex.textContent = `Q${state.i + 1} / ${state.quiz.length}`;
+    qTags.innerHTML = "";
+    qTags.appendChild(tagPill(q.sub));
+    qTags.appendChild(tagPill(`${q.level}`));
+    qTags.appendChild(tagPill(`${q.diff}`));
+    qTags.appendChild(tagPill(`#${q.pattern || "misc"}`));
+
+    qText.textContent = q.q;
+
+    choices.innerHTML = "";
+    const labels = ["A","B","C","D"];
+    q.c.forEach((txt, idx) => {
+      const div = document.createElement("div");
+      div.className = "choice" + (a.chosen === idx ? " selected" : "");
+      div.setAttribute("role","button");
+      div.tabIndex = 0;
+
+      const badge = document.createElement("div");
+      badge.className = "badge";
+      badge.textContent = labels[idx];
+
+      const body = document.createElement("div");
+      body.textContent = txt;
+
+      div.appendChild(badge);
+      div.appendChild(body);
+
+      div.addEventListener("click", () => choose(idx));
+      div.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          choose(idx);
+        }
+      });
+
+      choices.appendChild(div);
+    });
+
+    btnPrev.disabled = state.i === 0;
+    btnNext.textContent = (state.i === state.quiz.length - 1) ? "採点へ" : "次へ";
+
+    // progress
+    const answered = state.answers.filter(x => x.chosen !== null).length;
+    progressBar.style.width = `${Math.round((answered / state.quiz.length) * 100)}%`;
+
+    // timer
+    state.qShownAt = now();
+    startTimerTick();
+    updateTimerUI();
+
+    // buttons
+    btnReset.disabled = false;
+    btnGrade.disabled = false;
+  }
+
+  function choose(idx) {
+    accumulateTime(); // 選択操作までの時間を加算
+    const a = state.answers[state.i];
+    a.chosen = idx;
+    // 再表示
+    renderQuestion();
+  }
+
+  function next() {
+    accumulateTime();
+    if (state.i === state.quiz.length - 1) {
+      gradeAndShow();
+      return;
+    }
+    state.i += 1;
+    renderQuestion();
+  }
+
+  function prev() {
+    accumulateTime();
+    state.i = Math.max(0, state.i - 1);
+    renderQuestion();
+  }
+
+  btnNext.addEventListener("click", next);
+  btnPrev.addEventListener("click", prev);
+
+  // ===== Controls =====
+  btnNew.addEventListener("click", () => {
+    if (!state.unlocked) return;
+    buildQuiz();
+    setVisible("quiz");
+    renderQuestion();
+  });
+
+  btnReset.addEventListener("click", () => {
+    if (!state.quiz.length) return;
+    if (!confirm("解答をすべてリセットしますか？")) return;
+    accumulateTime();
+    state.answers = state.quiz.map(q => ({
+      chosen: null, correctIndex: q.a, isCorrect: null, timeMs: 0, visits: 0
+    }));
+    state.i = 0;
+    renderQuestion();
+  });
+
+  btnGrade.addEventListener("click", () => {
+    if (!state.quiz.length) return;
+    gradeAndShow();
+  });
+
+  btnBackToTop.addEventListener("click", () => {
+    stopTimerTick();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    setVisible("quiz"); // いったん戻す（次に新規作成をすぐ押せる）
+    // ただし問題は残す。気分で続きをやれるように。
+  });
+
+  // ===== Grading & Analysis =====
+  function mean(arr) {
+    if (!arr.length) return 0;
+    return arr.reduce((s,x)=>s+x,0)/arr.length;
+  }
+
+  function gradeAndShow() {
+    stopTimerTick();
+    accumulateTime();
+
+    // mark correctness
+    for (let i = 0; i < state.quiz.length; i++) {
+      const q = state.quiz[i];
+      const a = state.answers[i];
+      a.isCorrect = (a.chosen === q.a);
+    }
+
+    const total = state.quiz.length;
+    const correct = state.answers.filter(x => x.isCorrect).length;
+    const acc = Math.round((correct / total) * 100);
+
+    const totalTime = state.answers.reduce((s,x)=>s+x.timeMs,0);
+    const avgTime = total ? totalTime / total : 0;
+
+    scoreLine.textContent = `${correct} / ${total}（${acc}%）　合計：${fmtSec(totalTime)}　平均：${fmtSec(avgTime)}`;
+
+    renderBreakdown();
+    drawRadar();
+    renderExplain();
+    renderAIText();
+
+    setVisible("result");
+    window.scrollTo({ top: resultCard.offsetTop - 10, behavior: "smooth" });
+  }
+
+  function renderBreakdown() {
+    const subjects = ["国語","数学","英語","理科","社会"];
+
+    const bySub = subjects.map(sub => {
+      const idxs = state.quiz.map((q,i)=>({q,i})).filter(x => x.q.sub === sub).map(x=>x.i);
+      const total = idxs.length;
+      const cor = idxs.filter(i => state.answers[i].isCorrect).length;
+      const time = idxs.reduce((s,i)=>s+state.answers[i].timeMs,0);
+      const avg = total ? time/total : 0;
+      return { sub, total, cor, acc: total?Math.round(cor/total*100):0, time, avg };
+    });
+
+    const byDiff = ["基礎","標準","発展"].map(d => {
+      const idxs = state.quiz.map((q,i)=>({q,i})).filter(x => x.q.diff===d).map(x=>x.i);
+      const total = idxs.length;
+      const cor = idxs.filter(i => state.answers[i].isCorrect).length;
+      const time = idxs.reduce((s,i)=>s+state.answers[i].timeMs,0);
+      const avg = total ? time/total : 0;
+      return { d, total, cor, acc: total?Math.round(cor/total*100):0, time, avg };
+    });
+
+    const patterns = {};
+    for (let i=0;i<state.quiz.length;i++){
+      const p = state.quiz[i].pattern || "misc";
+      if (!patterns[p]) patterns[p] = { p, total:0, cor:0, time:0 };
+      patterns[p].total += 1;
+      if (state.answers[i].isCorrect) patterns[p].cor += 1;
+      patterns[p].time += state.answers[i].timeMs;
+    }
+    const byPattern = Object.values(patterns).map(x => ({
+      ...x,
+      acc: x.total ? Math.round(x.cor/x.total*100) : 0,
+      avg: x.total ? x.time/x.total : 0
+    })).sort((a,b)=> (a.acc - b.acc) || (b.avg - a.avg));
+
+    breakdown.innerHTML = "";
+
+    const blocks = [
+      { k:"教科別", items: bySub.map(x => `${x.sub}：${x.cor}/${x.total}（${x.acc}%） 平均${fmtSec(x.avg)}`) },
+      { k:"難易度別", items: byDiff.map(x => `${x.d}：${x.cor}/${x.total}（${x.acc}%） 平均${fmtSec(x.avg)}`) },
+      { k:"パターン別（弱い順）", items: byPattern.slice(0, 12).map(x => `#${x.p}：${x.cor}/${x.total}（${x.acc}%） 平均${fmtSec(x.avg)}`) }
+    ];
+
+    for (const b of blocks) {
+      const box = document.createElement("div");
+      box.className = "kpi";
+      const k = document.createElement("div");
+      k.className = "k";
+      k.textContent = b.k;
+      const v = document.createElement("div");
+      v.className = "v";
+      v.textContent = b.items[0] || "-";
+
+      const list = document.createElement("div");
+      list.className = "muted small";
+      list.style.marginTop = "8px";
+      list.textContent = b.items.slice(1).join(" / ");
+
+      box.appendChild(k);
+      box.appendChild(v);
+      box.appendChild(list);
+      breakdown.appendChild(box);
+    }
+  }
+
+  // ===== Radar chart (5 subjects) =====
+  function drawRadar() {
+    const subjects = ["国語","数学","英語","理科","社会"];
+    const scores = subjects.map(sub => {
+      const idxs = state.quiz.map((q,i)=>({q,i})).filter(x => x.q.sub===sub).map(x=>x.i);
+      const total = idxs.length;
+      const cor = idxs.filter(i => state.answers[i].isCorrect).length;
+      return total ? (cor/total*100) : 0;
+    });
+
+    const W = radar.width, H = radar.height;
+    ctx.clearRect(0,0,W,H);
+
+    const cx = W/2, cy = H/2 + 10;
+    const R = Math.min(W,H)*0.36;
+
+    // grid
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "#e8dfcf";
+    ctx.fillStyle = "#0d1b2a";
+
+    for (let g=1; g<=5; g++){
+      const r = (R*g)/5;
+      ctx.beginPath();
+      for (let i=0;i<5;i++){
+        const ang = (-Math.PI/2) + (i*2*Math.PI/5);
+        const x = cx + r*Math.cos(ang);
+        const y = cy + r*Math.sin(ang);
+        if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    // axes + labels
+    ctx.font = "12px system-ui";
+    ctx.fillStyle = "#0d1b2a";
+    for (let i=0;i<5;i++){
+      const ang = (-Math.PI/2) + (i*2*Math.PI/5);
+      const x = cx + (R+18)*Math.cos(ang);
+      const y = cy + (R+18)*Math.sin(ang);
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.lineTo(cx + R*Math.cos(ang), cy + R*Math.sin(ang));
+      ctx.stroke();
+
+      const label = `${subjects[i]} ${Math.round(scores[i])}%`;
+      ctx.fillText(label, x - (label.length*3), y + 4);
+    }
+
+    // polygon (no specific colors rule doesn't apply here; CSS-like ok. We'll use default stroke style)
+    ctx.beginPath();
+    for (let i=0;i<5;i++){
+      const ang = (-Math.PI/2) + (i*2*Math.PI/5);
+      const r = (scores[i]/100)*R;
+      const x = cx + r*Math.cos(ang);
+      const y = cy + r*Math.sin(ang);
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = "#1f4aa8";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = "#1f4aa8";
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // ===== Explain list =====
+  function renderExplain() {
+    explainList.innerHTML = "";
+
+    const box = document.createElement("div");
+    box.className = "explainBox";
+    box.id = "explainBox";
+    box.textContent = "番号を押すと、ここに解説が表示されます。";
+
+    for (let i=0;i<state.quiz.length;i++){
+      const q = state.quiz[i];
+      const a = state.answers[i];
+
+      const b = document.createElement("button");
+      b.className = "qbtn";
+      b.textContent = `${i+1}`;
+      if (a.isCorrect) b.style.borderColor = "#1b7f4b";
+      else if (a.chosen !== null) b.style.borderColor = "#b91c1c";
+      else b.style.borderColor = "#e8dfcf";
+
+      b.addEventListener("click", () => {
+        const chosen = a.chosen === null ? "(未回答)" : q.c[a.chosen];
+        const correct = q.c[q.a];
+        const line =
+          `【Q${i+1}】${q.sub} / ${q.level} / ${q.diff} / #${q.pattern}\n` +
+          `${q.q}\n\n` +
+          `あなたの解答：${chosen}\n` +
+          `正解：${correct}\n` +
+          `判定：${a.isCorrect ? "○" : (a.chosen===null ? "—" : "×")}\n` +
+          `解説：${q.exp || "（解説なし）"}\n` +
+          `この問題の累積時間：${fmtSec(a.timeMs)}（訪問回数：${a.visits}）`;
+        box.textContent = line;
+        box.scrollIntoView({ behavior:"smooth", block:"nearest" });
+      });
+
+      explainList.appendChild(b);
+    }
+    explainList.appendChild(box);
+  }
+
+  // ===== AI-like narrative analysis =====
+  function renderAIText() {
+    const rows = state.quiz.map((q,i)=>({
+      q, a: state.answers[i]
+    }));
+
+    const answered = rows.filter(x => x.a.chosen !== null);
+    const total = rows.length;
+    const correct = rows.filter(x => x.a.isCorrect).length;
+    const acc = total ? correct/total : 0;
+
+    const times = rows.map(x => x.a.timeMs);
+    const avg = mean(times);
+    const med = median(times);
+    const fastThresh = Math.max(1500, med * 0.7);
+    const slowThresh = Math.max(6000, med * 1.3);
+
+    const fastWrong = rows.filter(x => !x.a.isCorrect && x.a.chosen !== null && x.a.timeMs <= fastThresh);
+    const slowWrong = rows.filter(x => !x.a.isCorrect && x.a.chosen !== null && x.a.timeMs >= slowThresh);
+    const slowRight = rows.filter(x => x.a.isCorrect && x.a.timeMs >= slowThresh);
+    const fastRight = rows.filter(x => x.a.isCorrect && x.a.timeMs <= fastThresh);
+
+    // weakness by subject/pattern
+    const byKey = (keyFn) => {
+      const m = new Map();
+      for (const x of rows) {
+        const k = keyFn(x.q);
+        if (!m.has(k)) m.set(k, { k, total:0, cor:0, time:0, wrong:0 });
+        const o = m.get(k);
+        o.total++;
+        o.time += x.a.timeMs;
+        if (x.a.isCorrect) o.cor++;
+        else if (x.a.chosen !== null) o.wrong++;
+      }
+      return [...m.values()].map(o => ({
+        ...o,
+        acc: o.total ? o.cor/o.total : 0,
+        avg: o.total ? o.time/o.total : 0
+      }));
+    };
+
+    const subStats = byKey(q => q.sub).sort((a,b)=>a.acc-b.acc);
+    const patStats = byKey(q => q.pattern || "misc").sort((a,b)=>a.acc-b.acc || b.avg-a.avg);
+
+    const weakestSub = subStats[0];
+    const weakestPat = patStats[0];
+
+    // “弱点なし”判定
+    const weakCandidates = patStats.filter(x => x.total >= 2 && x.acc < 0.7);
+    const weakText = weakCandidates.length
+      ? weakCandidates.slice(0,4).map(x => `#${x.k}（正答率${pct(x.acc)}・平均${fmtSec(x.avg)}）`).join("、")
+      : "特になし（偏りなく処理できています）";
+
+    // 学習提案（pattern別）
+    const patAdvice = makeAdvice(weakCandidates.slice(0,4).map(x=>x.k));
+
+    // 文章生成（ローカル）
+    const lines = [];
+    lines.push(`総合所見：正答率は ${Math.round(acc*100)}%（${correct}/${total}）。平均解答時間は ${fmtSec(avg)}。`);
+    lines.push("");
+
+    lines.push(`スピード傾向：`);
+    lines.push(`- 速く正確：${fastRight.length}問（判断が速い領域）`);
+    lines.push(`- 速いが誤り：${fastWrong.length}問（見落とし／早とちりの可能性）`);
+    lines.push(`- 遅いが正確：${slowRight.length}問（慎重に積み上げるタイプ）`);
+    lines.push(`- 遅くて誤り：${slowWrong.length}問（手が止まる論点が残存）`);
+    lines.push("");
+
+    lines.push(`苦手領域の候補：${weakText}`);
+    lines.push("");
+
+    // “全問正解などで弱点が無い場合は無し”の要望に対応
+    if (weakCandidates.length === 0) {
+      lines.push(`弱点判定：無し。現時点では「苦手の固定化」は見られません。`);
+      lines.push(`次の伸ばし方：時間が伸びた問題（解説欄で累積時間が長い番号）を優先的に復習すると、スコアの再現性が上がります。`);
+      lines.push("");
+    } else {
+      lines.push(`推定原因（誤答×時間からの推論）：`);
+      if (fastWrong.length >= slowWrong.length) {
+        lines.push(`- “速い誤答”が相対的に多めです。解法は見えているが、条件・符号・語句の取り違えが起きやすいタイプ。`);
+        lines.push(`  → 対策：最初の10秒で「問われている量／条件」を指差し確認（心の中でOK）。`);
+      } else {
+        lines.push(`- “遅い誤答”が目立ちます。方針決定（どの公式・定理・知識を使うか）に時間を使い、最後に崩れるパターン。`);
+        lines.push(`  → 対策：解法テンプレ（例：数学なら図に印→条件→定理候補3つ、理科なら式→単位→代入）を固定化。`);
+      }
+      lines.push("");
+      lines.push(`改善アクション（短期で効く順）：`);
+      for (const a of patAdvice) lines.push(`- ${a}`);
+      lines.push("");
+    }
+
+    lines.push(`補足：最弱教科は「${weakestSub.k}」（正答率${pct(weakestSub.acc)}・平均${fmtSec(weakestSub.avg)}）。`);
+    lines.push(`最も崩れやすい出題タイプは「#${weakestPat.k}」（正答率${pct(weakestPat.acc)}・平均${fmtSec(weakestPat.avg)}）。`);
+    lines.push(`※この分析は、回答ログ（正誤・時間・出題タグ）からの統計的推定です。`);
+
+    aiAnalysis.textContent = lines.join("\n");
+  }
+
+  function pct(x){ return `${Math.round(x*100)}%`; }
+
+  function median(arr) {
+    if (!arr.length) return 0;
+    const a = arr.slice().sort((x,y)=>x-y);
+    const m = Math.floor(a.length/2);
+    return a.length%2 ? a[m] : (a[m-1]+a[m])/2;
+  }
+
+  function makeAdvice(patterns) {
+    const map = {
+      proof: "数学 #proof：理由（合同条件・角の性質）だけを“言葉で”言い切る練習。『何が等しい→なぜ等しい』を1行で。",
+      pythagoras: "数学 #pythagoras：直角マーク→辺の対応（斜辺は一番長い）を先に確定してから式。",
+      probability: "数学 #probability：独立か／戻すかを最初に宣言（戻さない→分母が変わる）。",
+      calc_ohm: "理科 #calc_ohm：単位を書いて式V=IR、未知数を左に置いてから代入。",
+      calc_density: "理科 #calc_density：密度=質量/体積を“見た瞬間”に出す。単位をセットで覚える。",
+      experiment: "理科 #experiment：操作変数・統一条件・結果の3点セットで読む癖。",
+      geo: "社会 #geo：地形・気候は『原因→結果』で覚える（季節風→日本海→雪）。",
+      history: "社会 #history：用語を“制度・目的・結果”で1枚にまとめると誤答が減る。",
+      civics: "社会 #civics：三権の役割を“すること/できないこと”で対にして整理。",
+      grammar: "英語 #grammar：文の骨格（S-V）を先に取り、空欄の品詞を固定してから選択肢を見る。"
+    };
+    const out = [];
+    for (const p of patterns) {
+      if (map[p]) out.push(map[p]);
+    }
+    if (!out.length) {
+      out.push("全体：時間が長いのに誤答だった問題を2つ選び、解説の“なぜ”を自分の言葉で言い直す（再現性が上がります）。");
     }
     return out;
   }
 
-  // ===== Build Quiz =====
-  function buildQuiz() {
-    if (!ensureBankLoaded()) return;
-
-    const seedStr = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const seed = hashSeed(seedStr);
-    const rng = mulberry32(seed);
-
-    state.seedStr = seedStr;
-    state.seed = seed;
-    state.rng = rng;
-
-    state.answers = new Map();
-    state.submitted = false;
-    state.startedAtMs = Date.now();
-    state.elapsedSec = 0;
-
-    $("seedPill").textContent = `Seed: ${seed.toString(16)}`;
-    $("timerPill").textContent = `Time: 00:00`;
-    $("progressPill").textContent = `Answered: 0 / 25`;
-    $("btnSubmit").disabled = true;
-    $("btnCopy").disabled = true;
-
-    setKpisPlaceholders();
-    renderAnalysisPlaceholder();
-    destroyChart();
-    $("numStrip").innerHTML = "";
-    $("quizRoot").innerHTML = "";
-
-    const filters = getFilters();
-
-    const limits = {
-      maxPerSubjectPattern: 2,
-      maxPerSubjectPatternRelaxed: 3,
-      maxGlobalPattern: 6,
-    };
-
-    const usedKeys = new Set();
-    const usedTextSig = new Set();
-    const subPatternCount = new Map();
-    const globalPatternCount = new Map();
-
-    const planBySub = diffPlanPerSubject(rng);
-
-    let picked = [];
-    for (const sub of SUBJECTS) {
-      const plan = planBySub[sub];
-      const five = pickFiveForSubject({
-        subject: sub,
-        bank: state.bank,
-        rng,
-        filters,
-        plan,
-        usedKeys,
-        usedTextSig,
-        subPatternCount,
-        globalPatternCount,
-        limits,
-      });
-      picked = picked.concat(five);
-    }
-
-    picked = uniqueByKey(picked);
-
-    while (picked.length < 25) {
-      toast("プール不足のため全教科から補填しています");
-      const pool = state.bank.filter(
-        (q) => filters.lvls.includes(q.level) && filters.diffs.includes(q.diff)
-      );
-      const q = pickOneWithConstraints({
-        pool,
-        rng,
-        usedKeys,
-        usedTextSig,
-        subPatternCount,
-        globalPatternCount,
-        limits: { ...limits, maxPerSubjectPattern: 3, maxPerSubjectPatternRelaxed: 4, maxGlobalPattern: 8 },
-        subject: "補填",
-      });
-      if (!q) break;
-      picked.push({ ...q, id: cryptoId() });
-      picked = uniqueByKey(picked);
-    }
-
-    picked = shuffle(picked, rng).slice(0, 25).map((q, i) => ({
-      ...q,
-      no: i + 1,
-    }));
-
-    picked = uniqueByKey(picked);
-    if (picked.length < 25) {
-      const hardLimits = { maxPerSubjectPattern: 4, maxPerSubjectPatternRelaxed: 5, maxGlobalPattern: 10 };
-      while (picked.length < 25) {
-        const pool = state.bank.filter((q) => filters.lvls.includes(q.level));
-        const q = pickOneWithConstraints({
-          pool,
-          rng,
-          usedKeys,
-          usedTextSig,
-          subPatternCount,
-          globalPatternCount,
-          limits: hardLimits,
-          subject: "補填",
-        });
-        if (!q) break;
-        picked.push({ ...q, id: cryptoId(), no: picked.length + 1 });
-        picked = uniqueByKey(picked);
-      }
-      picked = picked.slice(0, 25).map((q, i) => ({ ...q, no: i + 1 }));
-    }
-
-    if (picked.length < 25) {
-      toast("問題数が不足しています。bank.js の問題数（固定データ/テンプレ）を増やしてください。");
-    }
-
-    state.questions = picked;
-
-    renderQuestions();
-    renderNumStrip();
-    startTimer();
-    updateProgress();
-    toast("新しいクイズを生成しました（重複ゼロ＆偏り抑制）");
-  }
-
-  // ===== Rendering =====
-  function setKpisPlaceholders() {
-    const k = $("kpiGrid");
-    k.innerHTML = `
-      <div class="kpi"><div class="v">-</div><div class="k">総合スコア</div></div>
-      <div class="kpi"><div class="v">-</div><div class="k">正答率</div></div>
-      <div class="kpi"><div class="v">-</div><div class="k">平均回答時間</div></div>
-      <div class="kpi"><div class="v">-</div><div class="k">弱点教科</div></div>
-    `;
-  }
-
-  function renderAnalysisPlaceholder() {
-    $("analysisBox").innerHTML = `
-      <b>提出すると</b>、ここに分析が出ます。
-      <ul>
-        <li>教科別：得点・傾向</li>
-        <li>難易度別：得点（基礎/標準/発展）</li>
-        <li>学年別：得点（小/中）</li>
-        <li>正誤×時間からの「受験スタイル分析」</li>
-      </ul>
-      <div class="muted tiny">※番号ボタンで解説は提出後に表示</div>
-    `;
-  }
-
-  function renderQuestions() {
-    const root = $("quizRoot");
-    root.innerHTML = "";
-
-    for (const item of state.questions) {
-      const qEl = document.createElement("div");
-      qEl.className = "q";
-      qEl.dataset.qid = item.id;
-
-      const top = document.createElement("div");
-      top.className = "qtop";
-
-      const left = document.createElement("div");
-      left.innerHTML = `
-        <div class="qtitle">Q${item.no}. ${escapeHtml(item.q)}</div>
-        <div class="qmeta">
-          <span class="tag">${escapeHtml(item.sub)}</span>
-          <span class="tag">${escapeHtml(item.level)}</span>
-          <span class="tag">${escapeHtml(item.diff)}</span>
-        </div>
-      `;
-
-      const right = document.createElement("div");
-      const statusTag = document.createElement("span");
-      statusTag.className = "tag warn";
-      statusTag.textContent = "未採点";
-      statusTag.id = `status-${item.id}`;
-
-      const ansTag = document.createElement("span");
-      ansTag.className = "tag";
-      ansTag.textContent = "未回答";
-      ansTag.id = `ans-${item.id}`;
-      right.appendChild(statusTag);
-      right.appendChild(ansTag);
-
-      top.appendChild(left);
-      top.appendChild(right);
-
-      const choices = document.createElement("div");
-      choices.className = "choices";
-
-      item.c.forEach((text, idx) => {
-        const label = document.createElement("label");
-        label.className = "choice";
-        label.innerHTML = `
-          <input type="radio" name="q-${item.id}" value="${idx}" />
-          <div><b>${String.fromCharCode(65 + idx)}.</b> ${escapeHtml(text)}</div>
-        `;
-
-        label.addEventListener("click", () => {
-          if (state.submitted) return;
-          const now = Date.now();
-
-          const prev = state.answers.get(item.id);
-          if (!prev) {
-            state.answers.set(item.id, {
-              choiceIndex: idx,
-              firstAtMs: now,
-              lastAtMs: now,
-              changeCount: 1,
-              timeSpentSec: 0,
-            });
-          } else {
-            prev.choiceIndex = idx;
-            prev.lastAtMs = now;
-            prev.changeCount = (prev.changeCount || 0) + 1;
-          }
-
-          const box = root.querySelector(`.q[data-qid="${item.id}"]`);
-          box.querySelectorAll(".choice").forEach((ch) => ch.classList.remove("selected"));
-          label.classList.add("selected");
-          $("ans-" + item.id).textContent = `回答: ${String.fromCharCode(65 + idx)}`;
-
-          updateProgress();
-        });
-
-        choices.appendChild(label);
-      });
-
-      qEl.appendChild(top);
-      qEl.appendChild(choices);
-      root.appendChild(qEl);
-    }
-  }
-
-  function updateProgress() {
-    const answered = state.answers.size;
-    $("progressPill").textContent = `Answered: ${answered} / 25`;
-    $("btnSubmit").disabled = answered < 25 || state.submitted;
-    if (!state.submitted) renderNumStrip();
-  }
-
-  function renderNumStrip() {
-    const strip = $("numStrip");
-    strip.innerHTML = "";
-    for (const item of state.questions) {
-      const btn = document.createElement("button");
-      btn.textContent = item.no;
-      btn.disabled = !state.submitted;
-      btn.className = "neutral";
-
-      if (state.submitted) {
-        const ok = isCorrect(item.id);
-        btn.className = ok ? "good" : "bad";
-      }
-
-      btn.addEventListener("click", () => {
-        if (!state.submitted) return;
-        openExplanation(item.no);
-      });
-
-      strip.appendChild(btn);
-    }
-  }
-
-  // ===== Timer =====
-  function startTimer() {
-    if (state.timerHandle) clearInterval(state.timerHandle);
-    state.timerHandle = setInterval(() => {
-      state.elapsedSec = Math.floor((Date.now() - state.startedAtMs) / 1000);
-      $("timerPill").textContent = `Time: ${fmtTime(state.elapsedSec)}`;
-    }, 250);
-  }
-
-  // ===== Scoring =====
-  function isCorrect(qid) {
-    const q = state.questions.find((x) => x.id === qid);
-    const a = state.answers.get(qid);
-    if (!q || !a) return false;
-    return a.choiceIndex === q.a;
-  }
-
-  // 放置時間を除外：最初の選択〜最後の選択まで
-  function finalizeTimes() {
-    for (const q of state.questions) {
-      const a = state.answers.get(q.id);
-      if (!a) continue;
-      const first = safeNumber(a.firstAtMs);
-      const last = safeNumber(a.lastAtMs) || first;
-      const sec = first ? Math.max(1, Math.round((last - first) / 1000)) : 0;
-      a.timeSpentSec = sec;
-    }
-  }
-
-  function submit() {
-    if (state.submitted) return;
-    if (state.answers.size < 25) {
-      toast("全問回答してから提出してください");
-      return;
-    }
-
-    finalizeTimes();
-    state.submitted = true;
-
-    $("btnSubmit").disabled = true;
-    $("btnCopy").disabled = false;
-
-    const root = $("quizRoot");
-
-    for (const item of state.questions) {
-      const box = root.querySelector(`.q[data-qid="${item.id}"]`);
-      const choices = Array.from(box.querySelectorAll(".choice"));
-      const radios = Array.from(box.querySelectorAll('input[type="radio"]'));
-      radios.forEach((r) => (r.disabled = true));
-
-      const ans = state.answers.get(item.id);
-      const chosen = ans.choiceIndex;
-      const correct = item.a;
-
-      choices.forEach((ch, idx) => {
-        ch.classList.remove("selected", "correct", "wrong");
-        if (idx === chosen) ch.classList.add("selected");
-        if (idx === correct) ch.classList.add("correct");
-        if (idx === chosen && chosen !== correct) ch.classList.add("wrong");
-      });
-
-      const ok = chosen === correct;
-      const st = $("status-" + item.id);
-      st.className = `tag ${ok ? "good" : "bad"}`;
-      st.textContent = ok ? "正解" : "不正解";
-    }
-
-    renderNumStrip();
-    renderResultsAndAnalysis();
-    toast("採点しました（番号から解説が開けます）");
-  }
-
-  function buildPersonAnalysis({ perQTimes, perQOk, changeCounts, byDiff, bySub }) {
-    const avg = mean(perQTimes);
-    const sd = stdev(perQTimes);
-
-    const okTimes = perQTimes.filter((_, i) => perQOk[i]);
-    const ngTimes = perQTimes.filter((_, i) => !perQOk[i]);
-    const avgOk = mean(okTimes);
-    const avgNg = mean(ngTimes);
-
-    const avgChange = mean(changeCounts);
-    const changeHeavy = avgChange >= 1.8;
-
-    // スピード傾向
-    let speedType = "標準ペース型";
-    if (avg <= 6) speedType = "高速処理型（即断で回す）";
-    else if (avg >= 14) speedType = "熟考型（時間を使って精度を取りに行く）";
-
-    // ムラ
-    let stability = "安定型";
-    if (sd >= 8) stability = "ムラ型（問題相性で時間が跳ねやすい）";
-    else if (sd >= 5) stability = "ややムラあり";
-
-    // 誤答と時間の関係
-    let errorStyle = "バランス型";
-    if (ngTimes.length >= 3) {
-      if (avgNg - avgOk >= 4) errorStyle = "考え込むほど外しやすい（方針迷子になりがち）";
-      else if (avgOk - avgNg >= 4) errorStyle = "直感ミス型（急ぐほど落とす）";
-    }
-
-    // 難易度耐性
-    const acc = (x) => (x.total ? x.correct / x.total : 0);
-    const aB = acc(byDiff["基礎"]);
-    const aS = acc(byDiff["標準"]);
-    const aA = acc(byDiff["発展"]);
-    let diffType = "難易度耐性：良好";
-    if (aA <= aS - 0.25) diffType = "難易度耐性：発展で落ちやすい（解法の型が未固定）";
-    if (aS <= aB - 0.25) diffType = "難易度耐性：標準で落ちやすい（手順の精度を要改善）";
-
-    // 教科偏差
-    const subScores = SUBJECTS.map((s) => bySub[s].correct);
-    const min = Math.min(...subScores);
-    const max = Math.max(...subScores);
-    let subType = "教科バランス：良好";
-    if (max - min >= 3) subType = "教科バランス：得意不得意が大きい（学習配分で伸びる）";
-    else if (max - min === 2) subType = "教科バランス：やや偏りあり";
-
-    // 変更回数（迷い）
-    let decide = "選択の迷い：少なめ";
-    if (changeHeavy) decide = "選択の迷い：多め（見直し癖あり／時間配分に注意）";
-
-    return [
-      `<b>受験スタイル分析（正誤×時間×迷い）</b>`,
-      `・${speedType}`,
-      `・${stability}`,
-      `・${errorStyle}`,
-      `・${diffType}`,
-      `・${subType}`,
-      `・${decide}`,
-      `<span class="muted tiny">指標：平均${Math.round(avg)}秒、時間ばらつき(σ)${Math.round(sd)}秒、正解時${Math.round(avgOk)}秒/不正解時${Math.round(avgNg)}秒、平均変更回数${avgChange.toFixed(2)}回</span>`,
-    ];
-  }
-
-  function renderResultsAndAnalysis() {
-    const bySub = Object.fromEntries(SUBJECTS.map((s) => [s, { correct: 0, total: 0, time: 0 }]));
-    const byDiff = Object.fromEntries(DIFFS.map((d) => [d, { correct: 0, total: 0 }]));
-    const byLvl = Object.fromEntries(LEVELS.map((l) => [l, { correct: 0, total: 0 }]));
-
-    const perQTimes = [];
-    const perQOk = [];
-    const changeCounts = [];
-
-    let totalCorrect = 0;
-    let totalTime = 0;
-
-    for (const q of state.questions) {
-      const a = state.answers.get(q.id);
-      const ok = a.choiceIndex === q.a;
-
-      bySub[q.sub].total++;
-      bySub[q.sub].time += safeNumber(a.timeSpentSec);
-
-      byDiff[q.diff].total++;
-      byLvl[q.level].total++;
-
-      perQTimes.push(safeNumber(a.timeSpentSec));
-      perQOk.push(ok);
-      changeCounts.push(safeNumber(a.changeCount));
-
-      if (ok) {
-        totalCorrect++;
-        bySub[q.sub].correct++;
-        byDiff[q.diff].correct++;
-        byLvl[q.level].correct++;
-      }
-
-      totalTime += safeNumber(a.timeSpentSec);
-    }
-
-    const pct = Math.round((totalCorrect / 25) * 100);
-    const avgTime = Math.round(totalTime / 25);
-
-    const subCorrects = SUBJECTS.map((s) => bySub[s].correct);
-    const minSub = Math.min(...subCorrects);
-    const maxSub = Math.max(...subCorrects);
-
-    const strongest =
-      SUBJECTS.slice().sort((a, b) => bySub[b].correct - bySub[a].correct)[0];
-
-    // ★ 弱点判定：全教科5/5なら「なし」、それ以外で同点ばかりなら「均等」
-    let weakestText = "";
-    if (minSub === 5) {
-      weakestText = "なし（全教科満点）";
-    } else if (maxSub === minSub) {
-      weakestText = "均等（教科差なし）";
-    } else {
-      const weakest = SUBJECTS.slice().sort((a, b) => bySub[a].correct - bySub[b].correct)[0];
-      weakestText = `${weakest}（${bySub[weakest].correct}/5）`;
-    }
-
-    // KPI
-    $("kpiGrid").innerHTML = "";
-    const kpis = [
-      { v: `${totalCorrect} / 25`, k: "総合スコア" },
-      { v: `${pct}%`, k: "正答率" },
-      { v: `${avgTime}秒/問`, k: "平均回答時間" },
-      { v: weakestText, k: "弱点教科" },
-    ];
-    for (const x of kpis) {
-      const el = document.createElement("div");
-      el.className = "kpi";
-      el.innerHTML = `<div class="v">${escapeHtml(x.v)}</div><div class="k">${escapeHtml(x.k)}</div>`;
-      $("kpiGrid").appendChild(el);
-    }
-
-    // Analysis text
-    const lines = [];
-    lines.push(`<b>分析サマリ</b>`);
-    lines.push(`強み：<b>${escapeHtml(strongest)}</b> ／ 弱点：<b>${escapeHtml(weakestText)}</b>`);
-    lines.push(`<div class="hr"></div>`);
-
-    lines.push(`<b>教科別</b>`);
-    for (const s of SUBJECTS) {
-      lines.push(`・${escapeHtml(s)}：${bySub[s].correct}/5（平均 ${Math.round(bySub[s].time / 5)}秒/問）`);
-    }
-
-    lines.push(`<div class="hr"></div>`);
-    lines.push(`<b>難易度別</b>`);
-    for (const d of DIFFS) {
-      const t = byDiff[d].total || 1;
-      lines.push(`・${escapeHtml(d)}：${byDiff[d].correct}/${byDiff[d].total}（${Math.round((byDiff[d].correct / t) * 100)}%）`);
-    }
-
-    lines.push(`<div class="hr"></div>`);
-    lines.push(`<b>学年別</b>`);
-    for (const l of LEVELS) {
-      const t = byLvl[l].total || 1;
-      lines.push(`・${escapeHtml(l)}：${byLvl[l].correct}/${byLvl[l].total}（${Math.round((byLvl[l].correct / t) * 100)}%）`);
-    }
-
-    lines.push(`<div class="hr"></div>`);
-    lines.push(...buildPersonAnalysis({ perQTimes, perQOk, changeCounts, byDiff, bySub }));
-
-    $("analysisBox").innerHTML = lines.join("<br>");
-
-    // Radar
-    drawRadar(SUBJECTS.map((s) => bySub[s].correct));
-  }
-
-  function destroyChart() {
-    if (state.chart) {
-      state.chart.destroy();
-      state.chart = null;
-    }
-  }
-
-  function drawRadar(scores) {
-    const canvas = $("radar");
-    destroyChart();
-
-    if (!window.Chart) {
-      toast("Chart.js が読み込めないため、レーダーチャートを省略しました");
-      return;
-    }
-
-    state.chart = new Chart(canvas, {
-      type: "radar",
-      data: {
-        labels: SUBJECTS,
-        datasets: [
-          {
-            label: "得点（各5点満点）",
-            data: scores,
-            fill: true,
-            borderWidth: 2,
-            pointRadius: 3,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          r: {
-            min: 0,
-            max: 5,
-            ticks: { stepSize: 1 },
-            pointLabels: { font: { size: 12, weight: "600" } },
-          },
-        },
-      },
-    });
-  }
-
-  // ===== Explanation Modal =====
-  function openExplanation(no) {
-    const item = state.questions.find((x) => x.no === no);
-    if (!item) return;
-
-    const ans = state.answers.get(item.id);
-    const yourIdx = ans?.choiceIndex;
-    const correctIdx = item.a;
-
-    const your =
-      yourIdx === undefined
-        ? "未回答"
-        : `${String.fromCharCode(65 + yourIdx)}. ${item.c[yourIdx]}`;
-    const corr = `${String.fromCharCode(65 + correctIdx)}. ${item.c[correctIdx]}`;
-    const ok = yourIdx === correctIdx;
-
-    $("modalSub").textContent = `Q${item.no} / ${item.sub} / ${item.level} / ${item.diff} / ${ok ? "正解" : "不正解"}`;
-    $("modalBody").innerHTML = `
-      <div style="font-weight:900;font-size:16px;">${escapeHtml(item.q)}</div>
-      <div class="hr"></div>
-      <div><b>あなたの回答：</b> ${escapeHtml(your)}</div>
-      <div><b>正解：</b> ${escapeHtml(corr)}</div>
-      <div class="hr"></div>
-      <div><b>解説：</b><br>${escapeHtml(item.exp)}</div>
-      <div class="hr"></div>
-      <div class="muted tiny">※提出後のみ閲覧可</div>
-    `;
-
-    $("modalBack").style.display = "flex";
-    $("modalBack").setAttribute("aria-hidden", "false");
-  }
-
-  function closeModal() {
-    $("modalBack").style.display = "none";
-    $("modalBack").setAttribute("aria-hidden", "true");
-  }
-
-  // ===== Copy Results =====
-  async function copyResults() {
-    if (!state.submitted) {
-      toast("提出後にコピーできます");
-      return;
-    }
-
-    let totalCorrect = 0;
-    for (const q of state.questions) if (isCorrect(q.id)) totalCorrect++;
-
-    const lines = [];
-    lines.push("【義務教育5教科クイズ 結果】");
-    lines.push(`Seed: ${state.seed.toString(16)}`);
-    lines.push(`Time: ${fmtTime(state.elapsedSec)}`);
-    lines.push(`Score: ${totalCorrect}/25`);
-    lines.push("");
-
-    for (const q of state.questions) {
-      const a = state.answers.get(q.id);
-      const your = String.fromCharCode(65 + a.choiceIndex);
-      const corr = String.fromCharCode(65 + q.a);
-      const ok = your === corr ? "〇" : "×";
-      lines.push(`Q${q.no} [${q.sub}/${q.level}/${q.diff}] ${ok} あなた:${your} 正解:${corr}`);
-      lines.push(`  問: ${q.q}`);
-      lines.push(`  解説: ${q.exp}`);
-      lines.push(`  解答時間: ${a.timeSpentSec}秒 / 変更回数: ${a.changeCount}回`);
-      lines.push("");
-    }
-
-    const text = lines.join("\n");
-
+  // ===== Copy results =====
+  btnCopy.addEventListener("click", async () => {
     try {
+      const text = buildCopyText();
       await navigator.clipboard.writeText(text);
-      toast("結果をコピーしました");
+      btnCopy.textContent = "コピーしました";
+      setTimeout(()=>btnCopy.textContent="結果をコピー", 1200);
     } catch {
-      const ok = copyTextFallback(text);
-      ok ? toast("結果をコピーしました") : toast("コピーできませんでした");
+      alert("コピーに失敗しました。ブラウザの権限をご確認ください。");
     }
+  });
+
+  function buildCopyText() {
+    const total = state.quiz.length;
+    const correct = state.answers.filter(x => x.isCorrect).length;
+    const totalTime = state.answers.reduce((s,x)=>s+x.timeMs,0);
+    const avg = total ? totalTime/total : 0;
+
+    let s = "";
+    s += `【結果】${correct}/${total}（${Math.round(correct/total*100)}%）\n`;
+    s += `合計時間：${fmtSec(totalTime)} / 平均：${fmtSec(avg)}\n\n`;
+    s += "【AI分析】\n";
+    s += aiAnalysis.textContent + "\n\n";
+    s += "【各問ログ】\n";
+    for (let i=0;i<total;i++){
+      const q = state.quiz[i];
+      const a = state.answers[i];
+      const chosen = a.chosen===null ? "未回答" : q.c[a.chosen];
+      const corr = q.c[q.a];
+      s += `Q${i+1} ${q.sub}/${q.diff}/#${q.pattern}：${a.isCorrect?"○":"×"} ${fmtSec(a.timeMs)}\n`;
+      s += `  あなた：${chosen}\n  正解：${corr}\n`;
+    }
+    return s;
   }
 
-  // ===== Reset =====
-  function resetAnswers() {
-    state.answers = new Map();
-    state.submitted = false;
+  // ===== Init =====
+  loadUnlock();
 
-    $("btnCopy").disabled = true;
-    $("btnSubmit").disabled = true;
-    setKpisPlaceholders();
-    renderAnalysisPlaceholder();
-    destroyChart();
-    renderQuestions();
-    renderNumStrip();
-    updateProgress();
-    toast("回答をリセットしました");
-  }
-
-  // ===== Events =====
-  function wireEvents() {
-    $("btnNew").addEventListener("click", buildQuiz);
-    $("btnReset").addEventListener("click", resetAnswers);
-    $("btnSubmit").addEventListener("click", submit);
-    $("btnCopy").addEventListener("click", copyResults);
-
-    $("btnCloseModal").addEventListener("click", closeModal);
-    $("modalBack").addEventListener("click", (e) => {
-      if (e.target.id === "modalBack") closeModal();
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeModal();
-    });
-
-    ["lvlE", "lvlJ", "dB", "dS", "dA"].forEach((id) => {
-      const el = $(id);
-      if (!el) return;
-      el.addEventListener("change", () => {
-        toast("設定を変更しました（新しいクイズで反映）");
-      });
-    });
-  }
-
-  // ===== Boot =====
-  if (!ensurePass()) return;
-  wireEvents();
-  buildQuiz();
 })();
