@@ -288,6 +288,18 @@
   <div class="toast" id="toast"></div>
 
 <script>
+// ===== エラー可視化（デバッグ） =====
+window.addEventListener("error", (e) => {
+  const msg = `JS Error: ${e.message}\n${e.filename}:${e.lineno}`;
+  console.error(msg, e.error);
+  alert(msg); // まずは確実に気づけるようalert
+});
+window.addEventListener("unhandledrejection", (e) => {
+  const msg = `Promise Error: ${e.reason?.message || e.reason}`;
+  console.error(msg, e.reason);
+  alert(msg);
+});
+
 /* PWA */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(()=>{}));
@@ -949,3 +961,4 @@ if (!window.__QUIZ_BLOCKED__) {
 </script>
 </body>
 </html>
+
