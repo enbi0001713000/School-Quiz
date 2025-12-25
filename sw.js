@@ -1,5 +1,6 @@
-const CACHE_NAME = "school-quiz-v4";
-const ASSETS = ["./", "./index.html", "./bank.js", "./manifest.json"];
+const CACHE_NAME = "school-quiz-v5";
+const ASSETS = ["./", "./index.html", "./bank.js", "./app.js", "./manifest.json"];
+
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -20,4 +21,5 @@ self.addEventListener("fetch", (event) => {
     caches.match(event.request).then((cached) => cached || fetch(event.request))
   );
 });
+
 
