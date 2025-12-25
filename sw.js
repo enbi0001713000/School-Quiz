@@ -1,7 +1,7 @@
 /* sw.js（全文）
  * 更新したら CACHE_NAME を v+1 にする（超重要）
  */
-const CACHE_NAME = "school-quiz-v10";
+const CACHE_NAME = "school-quiz-v11";
 const ASSETS = [
   "./",
   "./index.html",
@@ -39,3 +39,4 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
