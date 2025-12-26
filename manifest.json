@@ -1,10 +1,20 @@
 {
-  "name": "義務教育5教科クイズ（25問）",
+  "name": "義務教育 5教科クイズ",
   "short_name": "5教科クイズ",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#F7F1E6",
-  "theme_color": "#0B1B3A",
-  "description": "小学校〜中学校範囲の国数英理社からランダム25問。提出後に分析とレーダーチャート、番号で解説。",
-  "icons": []
+  "background_color": "#fbf7ef",
+  "theme_color": "#0b3a79",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
 }
