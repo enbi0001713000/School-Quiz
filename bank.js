@@ -548,4 +548,35 @@
       let more = [];
       if (sub === "英語") more = genEnglishGrammar(need + 80).concat(genEnglishReading(need + 40));
       if (sub === "国語") more = genJapaneseVocab(need + 120);
-      if (sub
+      if (sub === "数学") more = genMathLinear(need + 120);
+      if (sub === "理科") more = genScienceCalc(need + 120);
+      if (sub === "社会") more = genSocialTime(need + 80).concat(genSocialCivics(need + 80));
+
+      const start = bank.length;
+      more.forEach((q, i) => {
+        q.key = toKey(q, start + i);
+        if (!q.patternGroup) q.patternGroup = q.pattern || "p";
+        if (!q.uid) q.uid = makeUid(q);
+      });
+      bank.push(...more);
+      bank = bank.filter(validateQuestion);
+    };
+
+    SUBJECTS.forEach(topUp);
+
+    // ここで “英語だけ” など異常なら即分かるよう統計出力
+    const stats = {};
+    SUBJECTS.forEach((s) => (stats[s] = countSub(s)));
+    console.log("[BANK stats]", stats, "total:", bank.length);
+
+    // 安全装置：教科が1つしかないなら明確にエラーを出す（調査を楽にする）
+    const uniqSubs = [...new Set(bank.map((x) => x.sub))];
+    if (uniqSubs.length < 3) {
+      console.warn("[BANK] subjects seem abnormal:", uniqSubs);
+    }
+
+    return bank;
+  }
+
+  window.BANK = buildBank();
+})();
