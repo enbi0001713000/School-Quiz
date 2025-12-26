@@ -1,8 +1,9 @@
 /* bank.js
   - 5教科が必ず混在するBANKを生成
   - 4択の品質（空/重複/メタ文言）を除外
-  - 教科別最低数を満たすまで自動追い足し（不足事故を防止）
   - 追加: uid（内容ベース重複判定） / patternGroup（テンプレ群）
+  - 追加: uid重複の安全装置（重複水増し停止）
+  - 追加: 教科別ユニーク不足が分かるログ
 */
 
 (function () {
@@ -12,8 +13,12 @@
   const GRADES = ["小", "中"];
   const DIFFS = ["基礎", "標準", "発展"];
 
-  // 教科別の最低保証（抽選でフィルタされても枯れにくいよう多め）
-  const MIN_PER_SUBJECT = 120;
+  // 「見かけの水増し」を止めた後に、最低限確保したい“ユニーク(uid)”数の目安
+  // ここを 120 にしても国語が追いつかない場合は、素材増量が必要だとログで分かる
+  const MIN_UNIQUE_PER_SUBJECT = 80;
+
+  // topUpで“新しいユニーク”が増えない時の停止閾値
+  const TOPUP_ROUNDS = 4;
 
   /* ========= ユーティリティ ========= */
   const pick = (arr, i) => arr[i % arr.length];
@@ -120,7 +125,71 @@
     return { c: arr, a: 0 };
   }
 
-  /* ========= 固定問題（最小サンプル：ここは増やしやすい） ========= */
+  function attachMeta(bank) {
+    bank.forEach((q, i) => {
+      q.key = toKey(q, i);
+      if (!q.patternGroup) q.patternGroup = q.pattern || "p";
+      if (!q.uid) q.uid = makeUid(q);
+    });
+    return bank;
+  }
+
+  function dedupeByUid(bank) {
+    const out = [];
+    const seen = new Set();
+    for (const q of bank) {
+      const uid = q?.uid;
+      if (!uid) continue;
+      if (seen.has(uid)) continue;
+      seen.add(uid);
+      out.push(q);
+    }
+    return out;
+  }
+
+  function calcStats(bank) {
+    const total = bank.length;
+    const uidSet = new Set(bank.map(q => q.uid));
+    const uniqueUid = uidSet.size;
+
+    const perSub = {};
+    SUBJECTS.forEach(s => {
+      const arr = bank.filter(q => q.sub === s);
+      const u = new Set(arr.map(q => q.uid)).size;
+      perSub[s] = { total: arr.length, unique: u };
+    });
+
+    const perGroup = {};
+    for (const q of bank) {
+      const g = q.patternGroup || q.pattern || "p";
+      if (!perGroup[g]) perGroup[g] = 0;
+      perGroup[g]++;
+    }
+
+    return { total, uniqueUid, perSub, perGroup };
+  }
+
+  function logStats(tag, bank) {
+    const st = calcStats(bank);
+    console.log(`[BANK] ${tag} total: ${st.total} unique(uid): ${st.uniqueUid}`);
+    console.table(
+      SUBJECTS.map(s => ({
+        sub: s,
+        total: st.perSub[s].total,
+        unique: st.perSub[s].unique,
+      }))
+    );
+
+    // patternGroup 上位
+    const topGroups = Object.entries(st.perGroup)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20)
+      .map(([g, n]) => ({ patternGroup: g, n }));
+
+    console.table(topGroups);
+  }
+
+  /* ========= 固定問題（最小サンプル） ========= */
   const FIXED = {
     国語: [
       {
@@ -197,12 +266,16 @@
       { subj: "She", base: "study", third: "studies", tail: "English" },
       { subj: "Ken", base: "like", third: "likes", tail: "music" },
       { subj: "My father", base: "watch", third: "watches", tail: "TV" },
+      { subj: "Tom", base: "have", third: "has", tail: "a dog" },
+      { subj: "My sister", base: "do", third: "does", tail: "her homework" },
     ];
     const past = [
       { subj: "I", base: "go", past: "went", tail: "to the park" },
       { subj: "We", base: "eat", past: "ate", tail: "lunch" },
       { subj: "They", base: "see", past: "saw", tail: "a movie" },
       { subj: "I", base: "buy", past: "bought", tail: "a book" },
+      { subj: "She", base: "take", past: "took", tail: "a picture" },
+      { subj: "He", base: "make", past: "made", tail: "a cake" },
     ];
     const preps = [
       { correct: "at", hint: "7 o'clock", exp: "時刻は at" },
@@ -210,6 +283,7 @@
       { correct: "in", hint: "April", exp: "月は in" },
       { correct: "in", hint: "Japan", exp: "国は in" },
       { correct: "at", hint: "school", exp: "地点（学校）は at" },
+      { correct: "on", hint: "the desk", exp: "接している面は on" },
     ];
     const comps = [
       { base: "tall", comp: "taller", diff: "標準" },
@@ -217,6 +291,7 @@
       { base: "easy", comp: "easier", diff: "標準" },
       { base: "interesting", comp: "more interesting", diff: "発展" },
       { base: "beautiful", comp: "more beautiful", diff: "発展" },
+      { base: "important", comp: "more important", diff: "発展" },
     ];
 
     for (let i = 0; i < n; i++) {
@@ -306,27 +381,11 @@
   function genEnglishReading(n) {
     const out = [];
     const items = [
-      {
-        sent: "I was tired, so I went to bed early.",
-        ask: "so の意味は？",
-        correct: "だから",
-        wrongs: ["しかし", "もし", "そして", "たとえば", "そのため"],
-        exp: "so は原因→結果の「だから」。",
-      },
-      {
-        sent: "I studied hard, but I couldn't solve the problem.",
-        ask: "but の意味は？",
-        correct: "しかし",
-        wrongs: ["だから", "もし", "そして", "そのため", "なぜなら"],
-        exp: "but は逆接「しかし」。",
-      },
-      {
-        sent: "I stayed home because it was raining.",
-        ask: "because の意味は？",
-        correct: "〜なので（なぜなら）",
-        wrongs: ["しかし", "もし", "そして", "だから", "そのため"],
-        exp: "because は理由「〜なので」。",
-      },
+      { sent: "I was tired, so I went to bed early.", ask: "so の意味は？", correct: "だから", wrongs: ["しかし", "もし", "そして", "たとえば", "そのため"], exp: "so は原因→結果の「だから」。" },
+      { sent: "I studied hard, but I couldn't solve the problem.", ask: "but の意味は？", correct: "しかし", wrongs: ["だから", "もし", "そして", "そのため", "なぜなら"], exp: "but は逆接「しかし」。" },
+      { sent: "I stayed home because it was raining.", ask: "because の意味は？", correct: "〜なので（なぜなら）", wrongs: ["しかし", "もし", "そして", "だから", "そのため"], exp: "because は理由「〜なので」。" },
+      { sent: "I was sick, so I didn't go to school.", ask: "didn't は何を表す？", correct: "否定（〜しなかった）", wrongs: ["疑問", "命令", "未来", "比較", "可能"], exp: "didn't は過去の否定。" },
+      { sent: "I will call you if I have time.", ask: "if の意味は？", correct: "もし〜なら", wrongs: ["だから", "しかし", "そして", "なぜなら", "〜の間"], exp: "if は条件「もし〜なら」。" },
     ];
 
     for (let i = 0; i < n; i++) {
@@ -347,10 +406,12 @@
     return out;
   }
 
-  /* ========= 生成：国語（語彙中心：安全領域） ========= */
+  /* ========= 国語：語彙/反対語/慣用句（テンプレ分割） ========= */
   function genJapaneseVocab(n) {
     const out = [];
-    const items = [
+
+    // 語彙（意味）: ja_vocab
+    const vocab = [
       ["適切", "状況や目的に合っている", ["無関係", "偶然", "不可能", "反対の意味"]],
       ["抽象", "形がなく概念的なこと", ["具体", "部分", "偶然", "単純"]],
       ["根拠", "理由やよりどころ", ["結論", "感想", "例外", "余談"]],
@@ -359,24 +420,139 @@
       ["慎重", "注意深く行うこと", ["軽率", "大胆", "乱暴", "無関心"]],
       ["要旨", "文章の中心となる内容", ["感想", "余談", "結末", "例外"]],
       ["主張", "自分の意見として強く述べること", ["例示", "対比", "説明", "装飾"]],
+      ["妥当", "適切で無理がないこと", ["不当", "過剰", "希少", "危険"]],
+      ["漠然", "はっきりしないさま", ["明確", "具体", "詳細", "確実"]],
+      ["促進", "進みを早めること", ["停止", "後退", "抑制", "散漫"]],
+      ["抑制", "勢いをおさえること", ["促進", "増大", "解放", "拡散"]],
+      ["従来", "これまでどおり", ["将来", "例外", "偶然", "途中"]],
+      ["急務", "急いで取り組む必要があること", ["余裕", "平常", "趣味", "延期"]],
+      ["客観", "個人の感情に左右されない見方", ["主観", "先入観", "偏見", "思い込み"]],
+      ["先入観", "前もって持つ固定的な考え", ["根拠", "客観", "事実", "結論"]],
+      ["提案", "考えを出して示すこと", ["反論", "拒否", "放棄", "隠蔽"]],
+      ["検討", "よく考えて調べること", ["即決", "放置", "軽視", "断念"]],
+      ["把握", "内容をしっかり理解すること", ["誤解", "軽視", "回避", "転換"]],
+      ["推測", "はっきりしないことを考えて当てること", ["断定", "確認", "拒否", "公表"]],
+      ["継続", "続けて行うこと", ["中断", "停止", "放棄", "解散"]],
+      ["顧みる", "ふり返って考える", ["進める", "忘れる", "隠す", "崩す"]],
+      ["阻害", "じゃまをして進まないようにすること", ["促進", "援助", "承認", "拡大"]],
+      ["改善", "悪い点をよくすること", ["悪化", "固定", "停止", "縮小"]],
+      ["対処", "問題に対応して処理すること", ["回避", "放置", "反省", "転換"]],
+      ["影響", "他に及ぼす働き", ["原因", "結果", "要因", "目的"]],
+      ["要因", "原因となる要素", ["結果", "結論", "前提", "偶然"]],
+      ["背景", "出来事のうしろにある事情", ["表面", "結末", "仮定", "例外"]],
+      ["顕在", "表に現れていること", ["潜在", "隠蔽", "抑制", "停滞"]],
+      ["潜在", "表に現れていないが内にあること", ["顕在", "公開", "確定", "完成"]],
+      ["端的", "要点をつかんで簡潔なさま", ["冗長", "曖昧", "複雑", "迂回"]],
+      ["緩和", "厳しさをやわらげること", ["強化", "悪化", "固定", "停止"]],
+      ["強調", "特に目立たせること", ["軽視", "無視", "否定", "省略"]],
+      ["相違", "違い", ["同一", "一致", "同様", "類似"]],
+      ["類似", "よく似ていること", ["相違", "対立", "無関係", "例外"]],
+      ["妨げる", "じゃまをして進ませない", ["助ける", "進める", "増やす", "褒める"]],
+      ["模索", "さがし求めること", ["断念", "確定", "放置", "否定"]],
+      ["傾向", "そうなりやすい流れ", ["反発", "停止", "例外", "誤解"]],
+      ["前提", "物事の成り立ちの土台", ["結論", "結果", "装飾", "余談"]],
+      ["妥協", "互いにゆずり合って折り合う", ["対立", "強行", "断絶", "排除"]],
+      ["堅実", "確実で手堅いさま", ["軽率", "曖昧", "過激", "不明"]],
+      ["稀少", "めったにないこと", ["一般", "平凡", "頻繁", "通常"]],
+      ["迅速", "すばやいこと", ["遅延", "停滞", "緩慢", "後退"]],
+      ["緻密", "細かいところまで行き届くこと", ["大雑把", "粗雑", "単純", "曖昧"]],
+      ["概略", "おおまかな内容", ["詳細", "本質", "結論", "余談"]],
+      ["本質", "物事の中心的な性質", ["表面", "装飾", "例外", "偶然"]],
+      ["懸念", "気にかかって心配すること", ["安心", "確信", "確定", "祝福"]],
+      ["妨害", "じゃまをして邪魔すること", ["支援", "促進", "提案", "承認"]],
+      ["整合", "つじつまが合うこと", ["矛盾", "相違", "混乱", "例外"]],
+      ["矛盾", "つじつまが合わないこと", ["整合", "一致", "承認", "肯定"]],
+      ["逸脱", "本筋から外れること", ["順守", "維持", "一致", "整合"]],
+      ["順守", "決まりを守ること", ["逸脱", "放棄", "軽視", "反発"]],
+      ["妥結", "話し合いでまとまること", ["決裂", "対立", "延期", "拒否"]],
+      ["決裂", "話し合いがまとまらないこと", ["妥結", "合意", "承認", "一致"]],
+    ];
+
+    // 反対語: ja_antonym
+    const antonym = [
+      ["拡大", "縮小", ["強化", "改善", "整合"]],
+      ["増加", "減少", ["継続", "強調", "顕在"]],
+      ["肯定", "否定", ["推測", "提案", "対処"]],
+      ["公開", "非公開", ["従来", "一般", "平凡"]],
+      ["上昇", "下降", ["緩和", "顕著", "端的"]],
+      ["開始", "終了", ["継続", "促進", "強調"]],
+      ["得意", "不得意", ["迅速", "堅実", "緻密"]],
+      ["有利", "不利", ["重要", "迅速", "適切"]],
+      ["安全", "危険", ["稀少", "一般", "平凡"]],
+      ["具体", "抽象", ["詳細", "概略", "本質"]],
+      ["緊張", "緩和", ["迅速", "堅実", "慎重"]],
+      ["一致", "相違", ["整合", "矛盾", "類似"]],
+    ];
+
+    // 慣用句: ja_idiom
+    const idiom = [
+      ["目を通す", "ざっと読む", ["じっと見る", "目をそらす", "詳細に暗記する"]],
+      ["手を打つ", "対策をする", ["手を洗う", "手を抜く", "手を貸す"]],
+      ["腰を据える", "落ち着いて取り組む", ["急いで終える", "あきらめる", "勢いで進める"]],
+      ["口を挟む", "会話に割り込む", ["黙り込む", "話をまとめる", "助言を求める"]],
+      ["頭が上がらない", "相手に恩義があり逆らえない", ["偉そうにする", "自由に振る舞う", "相手を見下す"]],
+      ["二の足を踏む", "ためらう", ["突き進む", "決断する", "先回りする"]],
+      ["肩を並べる", "同じ程度に達する", ["引き離す", "見下ろす", "退く"]],
+      ["気が引ける", "遠慮してしまう", ["得意になる", "怒り出す", "開き直る"]],
+      ["後を絶たない", "次々に続いてなくならない", ["完全になくなる", "一度で終わる", "急に増える"]],
+      ["見当がつく", "だいたい想像できる", ["全く分からない", "決めつける", "証明する"]],
     ];
 
     for (let i = 0; i < n; i++) {
-      const it = pick(items, i);
-      const word = it[0], correct = it[1], wrongs = it[2];
-      const { c, a } = force4Unique(correct, wrongs, i, ["反対の意味", "細かい部分"]);
-      out.push({
-        sub: "国語",
-        level: "中",
-        diff: "標準",
-        pattern: "vocab",
-        patternGroup: "ja_vocab",
-        q: `「${word}」の意味として最も近いものは？`,
-        c,
-        a,
-        exp: `「${word}」＝「${correct}」。`,
-      });
+      const kind = i % 3;
+
+      if (kind === 0) {
+        const it = pick(vocab, i);
+        const word = it[0], correct = it[1], wrongs = it[2];
+        const { c, a } = force4Unique(correct, wrongs, i, ["反対の意味", "細かい部分"]);
+        out.push({
+          sub: "国語",
+          level: "中",
+          diff: "標準",
+          pattern: "vocab",
+          patternGroup: "ja_vocab",
+          q: `「${word}」の意味として最も近いものは？`,
+          c,
+          a,
+          exp: `「${word}」＝「${correct}」。`,
+        });
+      }
+
+      if (kind === 1) {
+        const it = pick(antonym, i);
+        const word = it[0], correct = it[1], wrongs = it[2];
+        const { c, a } = force4Unique(correct, wrongs, i, ["逆の意味", "似た意味"]);
+        out.push({
+          sub: "国語",
+          level: "中",
+          diff: "標準",
+          pattern: "vocab",
+          patternGroup: "ja_antonym",
+          q: `「${word}」の反対の意味として最も適切なものは？`,
+          c,
+          a,
+          exp: `「${word}」の反対は「${correct}」。`,
+        });
+      }
+
+      if (kind === 2) {
+        const it = pick(idiom, i);
+        const phrase = it[0], correct = it[1], wrongs = it[2];
+        const { c, a } = force4Unique(correct, wrongs, i, ["比ゆ的な意味", "決まり文句"]);
+        out.push({
+          sub: "国語",
+          level: "中",
+          diff: "標準",
+          pattern: "vocab",
+          patternGroup: "ja_idiom",
+          q: `慣用句「${phrase}」の意味として最も近いものは？`,
+          c,
+          a,
+          exp: `「${phrase}」は「${correct}」の意味。`,
+        });
+      }
     }
+
     return out;
   }
 
@@ -492,6 +668,7 @@
       { q: "内閣が政治を行い法律を実行するはたらきは？", correct: "行政", wrongs: ["立法", "司法", "自治"] },
       { q: "裁判所が争いを裁くはたらきは？", correct: "司法", wrongs: ["立法", "行政", "自治"] },
       { q: "地方公共団体が地域のことを自主的に行うしくみは？", correct: "地方自治", wrongs: ["三権分立", "国民主権", "議院内閣制"] },
+      { q: "衆議院が優先されるしくみ（予算など）は？", correct: "衆議院の優越", wrongs: ["三権分立", "議院内閣制", "地方自治"] },
     ];
 
     for (let i = 0; i < n; i++) {
@@ -521,55 +698,75 @@
       bank.push(...(FIXED[s] || []));
     }
 
-    // 生成（ここで必ず5教科を混ぜる）
+    // 生成
     bank.push(...genEnglishGrammar(220));
-    bank.push(...genEnglishReading(120));
-    bank.push(...genJapaneseVocab(220));
+    bank.push(...genEnglishReading(140));
+    bank.push(...genJapaneseVocab(500));     // 重要：国語を増量（テンプレ複数化）
     bank.push(...genMathLinear(240));
     bank.push(...genScienceCalc(240));
-    bank.push(...genSocialTime(160));
-    bank.push(...genSocialCivics(160));
+    bank.push(...genSocialTime(180));
+    bank.push(...genSocialCivics(180));
 
-    // key/uid/patternGroup 付与 & 検品
-    bank.forEach((q, i) => {
-      q.key = toKey(q, i);
-      if (!q.patternGroup) q.patternGroup = q.pattern || "p";
-      if (!q.uid) q.uid = makeUid(q);
-    });
-    bank = bank.filter(validateQuestion);
+    bank = attachMeta(bank).filter(validateQuestion);
 
-    // 教科別に不足していれば追い足し（不足事故を潰す）
-    const countSub = (sub) => bank.filter((q) => q.sub === sub).length;
+    // まず現状ログ（重複水増しありの状態）
+    logStats("raw(before dedupe)", bank);
 
-    const topUp = (sub) => {
-      const need = Math.max(0, MIN_PER_SUBJECT - countSub(sub));
-      if (need <= 0) return;
+    // uid重複を落として“実態”にする（安全装置）
+    bank = dedupeByUid(bank);
 
-      let more = [];
-      if (sub === "英語") more = genEnglishGrammar(need + 80).concat(genEnglishReading(need + 40));
-      if (sub === "国語") more = genJapaneseVocab(need + 120);
-      if (sub === "数学") more = genMathLinear(need + 120);
-      if (sub === "理科") more = genScienceCalc(need + 120);
-      if (sub === "社会") more = genSocialTime(need + 80).concat(genSocialCivics(need + 80));
+    // 重複除去後のログ（あなたの計測ログがここで再現されるはず）
+    logStats("deduped(uid)", bank);
 
-      const start = bank.length;
-      more.forEach((q, i) => {
-        q.key = toKey(q, start + i);
-        if (!q.patternGroup) q.patternGroup = q.pattern || "p";
-        if (!q.uid) q.uid = makeUid(q);
-      });
-      bank.push(...more);
-      bank = bank.filter(validateQuestion);
-    };
+    // ここから「ユニーク不足」を検知し、増える教科だけtopUpを試みる
+    // ただし、素材が少ない教科（国語など）は増えないので、増えないこと自体をログで出す
+    const uniqueCountSub = (sub, arr) => new Set(arr.filter(q => q.sub === sub).map(q => q.uid)).size;
 
-    SUBJECTS.forEach(topUp);
+    function genMoreForSub(sub, n) {
+      if (sub === "英語") return genEnglishGrammar(Math.floor(n * 0.7)).concat(genEnglishReading(Math.ceil(n * 0.3)));
+      if (sub === "国語") return genJapaneseVocab(n);
+      if (sub === "数学") return genMathLinear(n);
+      if (sub === "理科") return genScienceCalc(n);
+      if (sub === "社会") return genSocialTime(Math.floor(n * 0.5)).concat(genSocialCivics(Math.ceil(n * 0.5)));
+      return [];
+    }
 
-    // ここで “英語だけ” など異常なら即分かるよう統計出力
-    const stats = {};
-    SUBJECTS.forEach((s) => (stats[s] = countSub(s)));
-    console.log("[BANK stats]", stats, "total:", bank.length);
+    function topUpUnique(sub) {
+      let before = uniqueCountSub(sub, bank);
+      if (before >= MIN_UNIQUE_PER_SUBJECT) return;
 
-    // 安全装置：教科が1つしかないなら明確にエラーを出す（調査を楽にする）
+      let rounds = 0;
+      while (rounds < TOPUP_ROUNDS) {
+        const need = Math.max(0, MIN_UNIQUE_PER_SUBJECT - before);
+        const batch = Math.max(80, need * 3); // ユニーク増は間引かれるので多めに生成
+        let more = genMoreForSub(sub, batch);
+        more = attachMeta(more).filter(validateQuestion);
+
+        const merged = bank.concat(more);
+        const ded = dedupeByUid(merged);
+
+        const after = uniqueCountSub(sub, ded);
+        const gained = after - before;
+
+        bank = ded;
+        before = after;
+        rounds++;
+
+        console.log(`[BANK topUpUnique] ${sub} round=${rounds} unique=${after} (gained +${gained})`);
+
+        if (gained <= 0) {
+          console.warn(`[BANK topUpUnique] ${sub} did NOT gain unique uids. Likely素材不足（テンプレ素材を増やす必要）`);
+          break;
+        }
+        if (before >= MIN_UNIQUE_PER_SUBJECT) break;
+      }
+    }
+
+    SUBJECTS.forEach(topUpUnique);
+
+    // 最終ログ：この時点で「どの教科が足りないか」が確定して見える
+    logStats(`final(minUnique=${MIN_UNIQUE_PER_SUBJECT})`, bank);
+
     const uniqSubs = [...new Set(bank.map((x) => x.sub))];
     if (uniqSubs.length < 3) {
       console.warn("[BANK] subjects seem abnormal:", uniqSubs);
