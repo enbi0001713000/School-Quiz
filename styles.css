@@ -258,6 +258,30 @@ h2{margin:0 0 10px 0}
   font-weight:900;
   cursor:pointer;
 }
+
+/* ★追加：解説番号の状態別（正解/不正解/未回答） */
+.mini.ok{
+  border-color: rgba(16,185,129,0.35);
+  background: rgba(16,185,129,0.10);
+  color: #047857;
+}
+.mini.ng{
+  border-color: rgba(180,35,24,0.35);
+  background: rgba(180,35,24,0.08);
+  color: var(--danger);
+}
+.mini.na{
+  border-color: rgba(0,0,0,0.18);
+  background: rgba(0,0,0,0.06);
+  color: rgba(0,0,0,0.55);
+}
+
+/* ★追加：表示中（active） */
+.mini.active{
+  outline: 3px solid rgba(31,95,184,0.22);
+  border-color: rgba(31,95,184,0.35);
+}
+
 .explainBox{
   margin-top:12px;
   border:1px solid var(--border);
