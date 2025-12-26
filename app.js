@@ -1,156 +1,130 @@
-/* app.js
-   義務教育 5教科クイズ（25問）— 出題/採点/解説/分析/履歴（この端末）/レーダー/最近10回推移
-   重要：index.html 側のIDが環境により異なる可能性があるため、複数候補IDに対応する“防御的実装”です。
-*/
-
 (() => {
   "use strict";
 
   /* =========================
-   * 設定（合言葉・保存キー等）
+   * 基本設定
    * ========================= */
-  // 合言葉（0217）を“見えにくく”して保持（完全秘匿ではありません：クライアントのみの簡易ロック）
-  const PASSPHRASE = String.fromCharCode(48, 50, 49, 55); // "0217"
-
-  const LS_UNLOCK = "quiz_unlock_v1";
-  const LS_HISTORY = "quiz_history_v1";
-
-  // 履歴保持数（端末内）
+  const PASSPHRASE = String.fromCharCode(48, 50, 49, 55); // "0217"（表示しない）
+  const LS_UNLOCK = "quiz_unlock_v2";
+  const LS_HISTORY = "quiz_history_v2";
   const HISTORY_MAX = 50;
 
-  // 出題数
   const SUBJECTS = ["国語", "数学", "英語", "理科", "社会"];
   const QUIZ_PER_SUBJECT = 5;
   const TOTAL_Q = SUBJECTS.length * QUIZ_PER_SUBJECT;
 
-  // 難易度比率（基礎2割・標準5割・発展3割）
   const DIFF_TARGET = { "基礎": 0.2, "標準": 0.5, "発展": 0.3 };
   const DIFFS = ["基礎", "標準", "発展"];
 
+  // pattern は内部コードのまま保持し、表示だけ日本語にする
+  const PATTERN_LABEL = {
+    kobun: "古文",
+    kanbun: "漢文",
+    vocab: "語彙",
+    reading: "読解",
+    grammar: "文法",
+    civics: "公民",
+    geo: "地理",
+    history: "歴史",
+    experiment: "実験",
+    calc: "計算",
+    physics: "物理",
+    chemistry: "化学",
+    biology: "生物",
+    earth: "地学",
+    function: "関数",
+    geometry: "図形",
+    proof: "証明",
+  };
+  const labelPattern = (p) => {
+    const key = String(p ?? "").replace(/^#/, "").trim();
+    return PATTERN_LABEL[key] || key || "";
+  };
+
   /* =========================
-   * DOM ユーティリティ
+   * DOM
    * ========================= */
-  const byId = (id) => document.getElementById(id);
-
-  const firstEl = (...candidates) => {
-    for (const c of candidates.flat()) {
-      if (!c) continue;
-      const el = typeof c === "string" ? byId(c) : c;
-      if (el) return el;
-    }
-    return null;
-  };
-
-  const firstBtnByText = (needle) => {
-    const btns = [...document.querySelectorAll("button")];
-    return btns.find((b) => (b.textContent || "").trim().includes(needle)) || null;
-  };
-
-  const showEl = (el) => { if (el) el.style.display = ""; };
-  const hideEl = (el) => { if (el) el.style.display = "none"; };
-
-  const safeSetText = (el, txt) => { if (el) el.textContent = txt; };
-  const safeSetHTML = (el, html) => { if (el) el.innerHTML = html; };
-
-  const clamp01 = (x) => Math.max(0, Math.min(1, x));
-
+  const $ = (id) => document.getElementById(id);
   const nowMs = () => Date.now();
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const fmtPct = (x) => `${Math.round(clamp01(x) * 100)}%`;
+  const fmtSec = (ms) => `${Math.round((ms || 0) / 1000)}秒`;
+  const fmtSec1 = (ms) => `${(ms / 1000).toFixed(1)}s`;
 
-  /* =========================
-   * 要素参照（候補IDを広めに）
-   * ========================= */
-  const UI = {
-    // ロック解除
-    unlockCard: () => firstEl("unlockCard", "cardUnlock", "unlockSection", "sectionUnlock"),
-    passInput: () => firstEl("passInput", "passphrase", "unlockInput", "pass"),
-    btnUnlock: () => firstEl("btnUnlock", "unlockBtn", "btnPass", "btnUnlockPass") || firstBtnByText("ロック解除"),
+  const el = {
+    unlockCard: () => $("unlockCard"),
+    passInput: () => $("passInput"),
+    btnUnlock: () => $("btnUnlock"),
 
-    // フィルタ
-    filterCard: () => firstEl("filterCard", "filtersCard", "tagCard", "sectionFilters"),
-    // 学年帯
-    chkGradeE: () => firstEl("chkGradeE", "gradeE", "tagGradeE", "chkElementary"),
-    chkGradeJ: () => firstEl("chkGradeJ", "gradeJ", "tagGradeJ", "chkJunior"),
-    // 難易度
-    chkDiffB: () => firstEl("chkDiffB", "diffBasic", "tagDiffBasic"),
-    chkDiffN: () => firstEl("chkDiffN", "diffNormal", "tagDiffNormal"),
-    chkDiffA: () => firstEl("chkDiffA", "diffAdvanced", "tagDiffAdvanced"),
-    // オプション
-    chkAvoidSimilar: () => firstEl("chkAvoidSimilar", "avoidSimilar", "tagAvoidSimilar"),
-    chkNoDup: () => firstEl("chkNoDup", "noDupIn25", "tagNoDup"),
+    filterCard: () => $("filterCard"),
+    chkGradeE: () => $("chkGradeE"),
+    chkGradeJ: () => $("chkGradeJ"),
+    chkDiffB: () => $("chkDiffB"),
+    chkDiffN: () => $("chkDiffN"),
+    chkDiffA: () => $("chkDiffA"),
+    chkAvoidSimilar: () => $("chkAvoidSimilar"),
+    chkNoDup: () => $("chkNoDup"),
 
-    // トップボタン
-    btnNew: () => firstEl("btnNew", "btnNewQuiz") || firstBtnByText("新しいクイズ"),
-    btnReset: () => firstEl("btnReset", "btnResetAnswers") || firstBtnByText("解答リセット"),
-    btnGrade: () => firstEl("btnGrade", "btnToResult", "btnScore") || firstBtnByText("採点して結果へ"),
-    // 追加：右上に置く「履歴」ボタン（index.html側で追加）
-    btnHistoryTop: () => firstEl("btnHistoryTop") || firstBtnByText("履歴"),
+    btnHistoryTop: () => $("btnHistoryTop"),
+    btnNew: () => $("btnNew"),
+    btnReset: () => $("btnReset"),
+    btnGrade: () => $("btnGrade"),
 
-    // 画面領域
-    quizView: () => firstEl("viewQuiz", "quizView", "sectionQuiz", "quizSection"),
-    resultView: () => firstEl("viewResult", "resultView", "sectionResult", "resultSection"),
-    // クイズ表示
-    qNo: () => firstEl("qNo", "quizNo", "questionNo"),
-    qMeta: () => firstEl("qMeta", "quizMeta", "questionMeta"),
-    qText: () => firstEl("qText", "quizText", "questionText"),
-    choices: () => firstEl("choices", "choiceList", "options"),
-    btnPrev: () => firstEl("btnPrev", "prevBtn") || firstBtnByText("前へ"),
-    btnNext: () => firstEl("btnNext", "nextBtn") || firstBtnByText("次へ"),
+    viewQuiz: () => $("viewQuiz"),
+    viewResult: () => $("viewResult"),
 
-    // 結果表示
-    resultSummary: () => firstEl("resultSummary", "summary", "scoreSummary"),
-    radarCanvas: () => firstEl("radarCanvas", "radar", "radarChart"),
-    analysisText: () => firstEl("analysisText", "aiAnalysis", "analysis"),
-    breakdown: () => firstEl("breakdown", "detailBreakdown", "resultBreakdown"),
-    explainList: () => firstEl("explainList", "explanations", "explainButtons"),
-    explainBox: () => firstEl("explainBox", "explainDetail", "explainPanel"),
+    qNo: () => $("qNo"),
+    qChips: () => $("qChips"),
+    qElapsed: () => $("qElapsed"),
+    qText: () => $("qText"),
+    choices: () => $("choices"),
+    btnPrev: () => $("btnPrev"),
+    btnNext: () => $("btnNext"),
+    progressFill: () => $("progressFill"),
 
-    // 履歴
-    btnToggleHistory: () => firstEl("btnToggleHistory", "btnHistory", "btnHistoryOpen") || firstBtnByText("履歴を表示"),
-    historyPanel: () => firstEl("historyPanel", "historySection", "history", "panelHistory"),
-    historyStats: () => firstEl("historyStats", "historySummary", "historyAverages"),
-    historyList: () => firstEl("historyList", "historyItems"),
-    historyCanvas: () => firstEl("historyCanvas", "historyChart", "lineCanvas"),
-    btnClearHistory: () => firstEl("btnClearHistory", "historyClear") || firstBtnByText("履歴を全削除"),
+    resultSummary: () => $("resultSummary"),
+    radarCanvas: () => $("radarCanvas"),
+    analysisText: () => $("analysisText"),
+    breakdown: () => $("breakdown"),
+    explainList: () => $("explainList"),
+    explainBox: () => $("explainBox"),
+
+    btnToggleHistory: () => $("btnToggleHistory"),
+    btnClearHistory: () => $("btnClearHistory"),
+    historyPanel: () => $("historyPanel"),
+    historyStats: () => $("historyStats"),
+    historyCanvas: () => $("historyCanvas"),
+    historyList: () => $("historyList"),
   };
 
+  const show = (x) => { if (x) x.style.display = ""; };
+  const hide = (x) => { if (x) x.style.display = "none"; };
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;").replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
   /* =========================
-   * データ（bank.js 互換ロード）
+   * bank.js ロード
    * ========================= */
   function loadBank() {
-    // 想定：bank.js が以下のいずれかを提供
-    // 1) window.BANK = [q,...]
-    // 2) window.getBank() => [q,...]
-    // 3) window.buildBank() => [q,...]
-    // 4) window.BANK_BY_SUBJECT = {国語:[...], ...} など
     let bank = null;
-
     if (Array.isArray(window.BANK)) bank = window.BANK;
     if (!bank && typeof window.getBank === "function") bank = window.getBank();
     if (!bank && typeof window.buildBank === "function") bank = window.buildBank();
+    if (!Array.isArray(bank)) bank = [];
 
-    if (!bank && window.BANK_BY_SUBJECT && typeof window.BANK_BY_SUBJECT === "object") {
-      const arr = [];
-      for (const k of Object.keys(window.BANK_BY_SUBJECT)) {
-        const v = window.BANK_BY_SUBJECT[k];
-        if (Array.isArray(v)) arr.push(...v);
-      }
-      bank = arr;
-    }
-
-    if (!Array.isArray(bank)) {
-      console.error("[app.js] 問題バンクを読み込めませんでした。bank.js の公開API（BANK / getBank / buildBank 等）を確認してください。");
-      return [];
-    }
-
-    // key が無い場合は付与（重複排除用）
+    // key 付与（無ければ）
     bank.forEach((q, i) => {
       if (!q) return;
-      if (!q.key) q.key = `${q.sub || "?"}|${q.level || "?"}|${q.diff || "?"}|${q.pattern || "p"}|${(q.q || "").slice(0, 20)}|${i}`;
+      if (!q.key) q.key = `${q.sub}|${q.level}|${q.diff}|${q.pattern || "p"}|${(q.q || "").slice(0, 24)}|${i}`;
     });
 
     return bank;
   }
-
   const BANK = loadBank();
 
   /* =========================
@@ -158,33 +132,30 @@
    * ========================= */
   const state = {
     unlocked: false,
-    quiz: [],           // 25問
-    answers: [],        // { chosen, timeMs, visits }
-    i: 0,               // 現在問
-    shownAt: 0,         // 表示開始時刻
-    startedAt: 0,       // クイズ開始
+    quiz: [],
+    answers: [],
+    i: 0,
+    shownAt: 0,
+    timer: null,
     graded: false,
   };
 
   /* =========================
    * LocalStorage（履歴）
    * ========================= */
+  const isUnlocked = () => localStorage.getItem(LS_UNLOCK) === "1";
+  const setUnlocked = () => localStorage.setItem(LS_UNLOCK, "1");
+
   function loadHistory() {
     try {
       const raw = localStorage.getItem(LS_HISTORY);
       const arr = raw ? JSON.parse(raw) : [];
       return Array.isArray(arr) ? arr : [];
-    } catch {
-      return [];
-    }
+    } catch { return []; }
   }
-
   function saveHistory(arr) {
-    try {
-      localStorage.setItem(LS_HISTORY, JSON.stringify(arr));
-    } catch {}
+    try { localStorage.setItem(LS_HISTORY, JSON.stringify(arr)); } catch {}
   }
-
   function appendHistory(snapshot) {
     const arr = loadHistory();
     arr.unshift(snapshot);
@@ -193,46 +164,42 @@
   }
 
   /* =========================
-   * ロック解除
+   * UI 制御（重要：右上ボタン禁止マーク対策）
    * ========================= */
-  function isUnlocked() {
-    return localStorage.getItem(LS_UNLOCK) === "1";
-  }
+  function setTopButtonsEnabled(enabled) {
+    // 履歴は常に押せる（未解除でも過去履歴があるなら見られる）
+    if (el.btnHistoryTop()) el.btnHistoryTop().disabled = false;
 
-  function setUnlocked() {
-    localStorage.setItem(LS_UNLOCK, "1");
+    // 他3つはロック解除後のみ
+    if (el.btnNew()) el.btnNew().disabled = !enabled;
+    if (el.btnReset()) el.btnReset().disabled = !enabled;
+    if (el.btnGrade()) el.btnGrade().disabled = !enabled;
   }
 
   function updateLockUI() {
-    const unlockCard = UI.unlockCard();
-    const filterCard = UI.filterCard();
-    const quizView = UI.quizView();
-    const resultView = UI.resultView();
+    state.unlocked = isUnlocked();
 
     if (state.unlocked) {
-      hideEl(unlockCard);
-      showEl(filterCard);
-      showEl(quizView);
-      // resultは採点時に表示でもOK。ここでは非表示に戻しておく。
-      if (resultView) resultView.style.display = "none";
+      hide(el.unlockCard());
+      show(el.filterCard());
+      show(el.viewQuiz());
+      hide(el.viewResult());
     } else {
-      showEl(unlockCard);
-      // 未解除なら操作を抑制
-      // フィルタ/クイズは見せる実装でも良いが、誤操作防止で隠す
-      hideEl(filterCard);
-      hideEl(quizView);
-      hideEl(resultView);
+      show(el.unlockCard());
+      hide(el.filterCard());
+      hide(el.viewQuiz());
+      // result は「履歴閲覧」で使うので、ここで隠し切らない（履歴ボタンで開く）
+      hide(el.viewResult());
     }
+
+    setTopButtonsEnabled(state.unlocked);
   }
 
   function onUnlock() {
-    const input = UI.passInput();
-    const pass = (input?.value || "").trim();
+    const pass = (el.passInput()?.value || "").trim();
     if (pass === PASSPHRASE) {
       setUnlocked();
-      state.unlocked = true;
       updateLockUI();
-      // 解除後すぐにクイズ生成（UX良し）
       if (!state.quiz.length) newQuiz();
     } else {
       alert("合言葉が違います。");
@@ -243,104 +210,109 @@
    * フィルタ取得
    * ========================= */
   function getSelectedGrades() {
-    const e = UI.chkGradeE();
-    const j = UI.chkGradeJ();
     const res = [];
-    if (!e && !j) return ["小", "中"]; // 要素が見つからない場合は全対象
-    if (e && e.checked) res.push("小");
-    if (j && j.checked) res.push("中");
+    if (el.chkGradeE()?.checked) res.push("小");
+    if (el.chkGradeJ()?.checked) res.push("中");
     return res.length ? res : ["小", "中"];
   }
-
   function getSelectedDiffs() {
-    const b = UI.chkDiffB();
-    const n = UI.chkDiffN();
-    const a = UI.chkDiffA();
     const res = [];
-    if (!b && !n && !a) return ["基礎", "標準", "発展"];
-    if (b && b.checked) res.push("基礎");
-    if (n && n.checked) res.push("標準");
-    if (a && a.checked) res.push("発展");
+    if (el.chkDiffB()?.checked) res.push("基礎");
+    if (el.chkDiffN()?.checked) res.push("標準");
+    if (el.chkDiffA()?.checked) res.push("発展");
     return res.length ? res : ["基礎", "標準", "発展"];
   }
-
   function getOptions() {
-    const avoidSimilar = UI.chkAvoidSimilar();
-    const noDup = UI.chkNoDup();
     return {
-      avoidSimilar: avoidSimilar ? !!avoidSimilar.checked : true,
-      noDup: noDup ? !!noDup.checked : true,
+      avoidSimilar: el.chkAvoidSimilar() ? !!el.chkAvoidSimilar().checked : true,
+      noDup: el.chkNoDup() ? !!el.chkNoDup().checked : true,
     };
   }
 
   /* =========================
-   * 出題ロジック
+   * 出題（重複禁止＋パターン偏り回避＋不足時フォールバック）
    * ========================= */
-  function shuffle(arr) {
-    for (let i = arr.length - 1; i > 0; i--) {
+  function shuffle(a) {
+    for (let i = a.length - 1; i > 0; i--) {
       const j = (Math.random() * (i + 1)) | 0;
-      [arr[i], arr[j]] = [arr[j], arr[i]];
+      [a[i], a[j]] = [a[j], a[i]];
     }
-    return arr;
+    return a;
   }
 
   function scoreCandidate(q, usedKeys, patternCount, opts) {
-    // 低いほど良い（選ばれやすい）
     let s = 0;
-
     if (opts.noDup && usedKeys.has(q.key)) s += 1e9;
-
     if (opts.avoidSimilar) {
       const p = q.pattern || "p";
       s += (patternCount.get(p) || 0) * 10;
     }
-
-    // わずかにランダムノイズ
     s += Math.random();
     return s;
   }
 
-  function pickByDifficulty(cands, n, selectedDiffs) {
-    // selectedDiffs の中で、比率に沿うように n 問選ぶ（足りない場合は埋める）
-    const pools = new Map(DIFFS.map((d) => [d, []]));
-    for (const q of cands) {
-      if (!selectedDiffs.includes(q.diff)) continue;
-      pools.get(q.diff)?.push(q);
-    }
-    for (const d of DIFFS) shuffle(pools.get(d));
+  function choose5ForSubject(subject, grades, diffs, opts, usedKeys, patternCount) {
+    // 基本候補
+    let cands = BANK.filter(q =>
+      q && q.sub === subject &&
+      grades.includes(q.level) &&
+      diffs.includes(q.diff) &&
+      Array.isArray(q.c) && q.c.length === 4 &&
+      typeof q.a === "number"
+    );
 
-    const target = {};
-    // 理想配分（丸め）
-    for (const d of DIFFS) target[d] = Math.round(n * (DIFF_TARGET[d] || 0));
-    // 端数調整
-    let sum = DIFFS.reduce((t, d) => t + target[d], 0);
-    while (sum < n) { target["標準"] += 1; sum++; }
-    while (sum > n) { target["標準"] -= 1; sum--; }
+    // 不足時フォールバック（止めない）
+    // 1) diff を広げる → 2) grade を広げる → 3) それでもダメなら subject 全体から拾う
+    if (cands.length < QUIZ_PER_SUBJECT) {
+      const allDiffs = ["基礎", "標準", "発展"];
+      const allGrades = ["小", "中"];
+      cands = BANK.filter(q => q && q.sub === subject && grades.includes(q.level) && allDiffs.includes(q.diff));
+      if (cands.length < QUIZ_PER_SUBJECT) {
+        cands = BANK.filter(q => q && q.sub === subject && allGrades.includes(q.level) && allDiffs.includes(q.diff));
+      }
+    }
 
-    const out = [];
-    // まず目標通り
-    for (const d of DIFFS) {
-      const pool = pools.get(d) || [];
-      const k = Math.min(target[d], pool.length);
-      out.push(...pool.slice(0, k));
-      pools.set(d, pool.slice(k));
+    if (cands.length < QUIZ_PER_SUBJECT) {
+      // bank側がまだ薄い
+      throw new Error(`${subject} の問題が不足しています（bank.js を増量してください）。`);
     }
-    // 足りない分は残りから埋める
-    while (out.length < n) {
-      const rest = [];
-      for (const d of DIFFS) rest.push(...(pools.get(d) || []));
-      if (!rest.length) break;
-      out.push(rest.shift());
-      // rest を消費した分を pools 側にも反映（雑でもOK：埋め優先）
-      // 再構築
-      for (const d of DIFFS) pools.set(d, (pools.get(d) || []).filter((q) => q !== out[out.length - 1]));
+
+    // 難易度比率をなるべく維持（教科内）
+    const ideal = {
+      "基礎": Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["基礎"]),
+      "標準": Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["標準"]),
+      "発展": QUIZ_PER_SUBJECT - (Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["基礎"]) + Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["標準"])),
+    };
+
+    const chosen = [];
+    let pool = cands.slice();
+
+    for (let k = 0; k < QUIZ_PER_SUBJECT; k++) {
+      const counts = { "基礎": 0, "標準": 0, "発展": 0 };
+      chosen.forEach(q => counts[q.diff]++);
+
+      const preferred = DIFFS.slice().sort((a, b) => (ideal[b] - counts[b]) - (ideal[a] - counts[a]))[0];
+      let candidates = pool.filter(q => q.diff === preferred);
+      if (!candidates.length) candidates = pool;
+
+      let best = null, bestScore = Infinity;
+      for (const q of candidates) {
+        const s = scoreCandidate(q, usedKeys, patternCount, opts);
+        if (s < bestScore) { bestScore = s; best = q; }
+      }
+
+      chosen.push(best);
+      usedKeys.add(best.key);
+      patternCount.set(best.pattern || "p", (patternCount.get(best.pattern || "p") || 0) + 1);
+      pool = pool.filter(q => q.key !== best.key);
     }
-    return out;
+
+    return chosen;
   }
 
   function buildQuiz() {
-    const grades = getSelectedGrades();      // ["小","中"]
-    const diffs = getSelectedDiffs();        // ["基礎","標準","発展"]
+    const grades = getSelectedGrades();
+    const diffs = getSelectedDiffs();
     const opts = getOptions();
 
     const usedKeys = new Set();
@@ -348,72 +320,13 @@
     const quiz = [];
 
     for (const sub of SUBJECTS) {
-      // 候補抽出
-      let cands = BANK.filter((q) =>
-        q &&
-        q.sub === sub &&
-        grades.includes(q.level) &&
-        diffs.includes(q.diff) &&
-        Array.isArray(q.c) && q.c.length === 4 &&
-        typeof q.a === "number"
-      );
-
-      // まず難易度配分で下準備（候補が極端に少ない場合に備えつつ）
-      // ※ここで pickByDifficulty すると重複排除・pattern抑制が効きにくいので、
-      //   先に“候補を拡げ”、選択時にスコアで調整する。
-      if (cands.length < QUIZ_PER_SUBJECT) {
-        // diffs を広げる／gradesを広げるなどは仕様次第だが、
-        // ここでは不足を明示
-        throw new Error(`${sub} の問題が不足しています（条件：${grades.join("/")}, ${diffs.join("/")}）`);
-      }
-
-      // 1教科5問をスコア方式で選ぶ
-      for (let k = 0; k < QUIZ_PER_SUBJECT; k++) {
-        // 毎回、難易度目標に寄せるためのバイアス：不足diffを優先する
-        const current = quiz.filter((q) => q.sub === sub);
-        const counts = { "基礎": 0, "標準": 0, "発展": 0 };
-        current.forEach((q) => counts[q.diff]++);
-        const ideal = {
-          "基礎": Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["基礎"]),
-          "標準": Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["標準"]),
-          "発展": QUIZ_PER_SUBJECT - (Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["基礎"]) + Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["標準"])),
-        };
-        const need = DIFFS.filter((d) => diffs.includes(d)).sort((a, b) => (ideal[b] - counts[b]) - (ideal[a] - counts[a]));
-        const preferredDiff = need[0];
-
-        // preferredDiff候補を優先、足りないなら全diff候補
-        let pool = cands.filter((q) => q.diff === preferredDiff);
-        if (pool.length < 1) pool = cands.slice();
-
-        // スコアで最良を選ぶ
-        let best = null;
-        let bestScore = Infinity;
-        for (const q of pool) {
-          const s = scoreCandidate(q, usedKeys, patternCount, opts);
-          if (s < bestScore) { bestScore = s; best = q; }
-        }
-
-        if (!best) break;
-
-        quiz.push(best);
-        usedKeys.add(best.key);
-
-        const p = best.pattern || "p";
-        patternCount.set(p, (patternCount.get(p) || 0) + 1);
-
-        // 使った問題は候補から除外（同教科内重複防止）
-        cands = cands.filter((q) => q.key !== best.key);
-      }
+      quiz.push(...choose5ForSubject(sub, grades, diffs, opts, usedKeys, patternCount));
     }
-
-    // 教科ごとに固めたので、全体をシャッフル
     shuffle(quiz);
 
-    // 念のためサイズ調整
     if (quiz.length !== TOTAL_Q) {
-      throw new Error(`出題の生成に失敗しました（生成数：${quiz.length}/${TOTAL_Q}）`);
+      throw new Error(`出題生成に失敗（${quiz.length}/${TOTAL_Q}）`);
     }
-
     return quiz;
   }
 
@@ -422,26 +335,21 @@
       alert("先に合言葉でロック解除してください。");
       return;
     }
-
     try {
       state.quiz = buildQuiz();
     } catch (e) {
       alert(String(e?.message || e));
       return;
     }
-
     state.answers = state.quiz.map(() => ({ chosen: null, timeMs: 0, visits: 0 }));
     state.i = 0;
     state.graded = false;
-    state.startedAt = nowMs();
     state.shownAt = nowMs();
 
-    // 表示をクイズに寄せる
-    const quizView = UI.quizView();
-    const resultView = UI.resultView();
-    showEl(quizView);
-    hideEl(resultView);
+    show(el.viewQuiz());
+    hide(el.viewResult());
 
+    startElapsedTimer();
     renderQuestion();
   }
 
@@ -449,7 +357,6 @@
    * 時間計測
    * ========================= */
   function accumulateTime() {
-    if (!state.quiz.length) return;
     const a = state.answers[state.i];
     if (!a) return;
     const dt = nowMs() - (state.shownAt || nowMs());
@@ -457,8 +364,22 @@
     state.shownAt = nowMs();
   }
 
+  function startElapsedTimer() {
+    stopElapsedTimer();
+    state.timer = setInterval(() => {
+      if (!state.quiz.length) return;
+      const dt = nowMs() - (state.shownAt || nowMs());
+      if (el.qElapsed()) el.qElapsed().textContent = fmtSec1(dt);
+    }, 100);
+  }
+
+  function stopElapsedTimer() {
+    if (state.timer) clearInterval(state.timer);
+    state.timer = null;
+  }
+
   /* =========================
-   * クイズ描画
+   * 描画：問題
    * ========================= */
   function renderQuestion() {
     if (!state.quiz.length) return;
@@ -466,47 +387,46 @@
     const q = state.quiz[state.i];
     const a = state.answers[state.i];
 
-    safeSetText(UI.qNo(), `Q${state.i + 1} / ${TOTAL_Q}`);
+    if (el.qNo()) el.qNo().textContent = `Q${state.i + 1} / ${TOTAL_Q}`;
+    if (el.progressFill()) el.progressFill().style.width = `${Math.round(((state.i + 1) / TOTAL_Q) * 100)}%`;
 
-    const meta = [];
-    if (q.sub) meta.push(q.sub);
-    if (q.level) meta.push(q.level);
-    if (q.diff) meta.push(q.diff);
-    safeSetText(UI.qMeta(), meta.join(" ・ "));
+    // chips（patternは日本語表示）
+    if (el.qChips()) {
+      const chips = [
+        q.sub,
+        q.level,
+        q.diff,
+        q.pattern ? `#${labelPattern(q.pattern)}` : "",
+      ].filter(Boolean);
+      el.qChips().innerHTML = chips.map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("");
+    }
 
-    safeSetText(UI.qText(), q.q || "");
+    if (el.qText()) el.qText().textContent = q.q || "";
 
-    // choices
-    const wrap = UI.choices();
-    if (wrap) {
-      wrap.innerHTML = "";
+    // choices（必ず A/B/C/D + 選択肢文）
+    if (el.choices()) {
+      el.choices().innerHTML = "";
+      const letters = ["A", "B", "C", "D"];
       q.c.forEach((txt, idx) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "choice";
-        btn.textContent = txt;
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "choice" + (a.chosen === idx ? " selected" : "");
+        b.innerHTML = `<div class="choiceBadge">${letters[idx]}</div><div>${escapeHtml(txt)}</div>`;
 
-        if (a.chosen === idx) btn.classList.add("selected");
-
-        btn.addEventListener("click", () => {
+        b.addEventListener("click", () => {
           if (!state.unlocked) return;
-          // 採点後でも選び直し禁止（仕様に合わせるなら可にしてもOK）
           if (state.graded) return;
           a.chosen = idx;
           renderQuestion();
         });
 
-        wrap.appendChild(btn);
+        el.choices().appendChild(b);
       });
     }
 
-    // prev/next
-    const prev = UI.btnPrev();
-    const next = UI.btnNext();
-    if (prev) prev.disabled = state.i === 0;
-    if (next) next.disabled = state.i === TOTAL_Q - 1;
+    if (el.btnPrev()) el.btnPrev().disabled = state.i === 0;
+    if (el.btnNext()) el.btnNext().disabled = state.i === TOTAL_Q - 1;
 
-    // visits
     a.visits = (a.visits || 0) + 1;
   }
 
@@ -517,7 +437,6 @@
     state.shownAt = nowMs();
     renderQuestion();
   }
-
   function goNext() {
     if (!state.quiz.length) return;
     accumulateTime();
@@ -527,84 +446,53 @@
   }
 
   function resetAnswers() {
-    if (!state.quiz.length) return;
     if (!state.unlocked) return;
+    if (!state.quiz.length) return;
     if (!confirm("このクイズの解答をリセットしますか？")) return;
-
     state.answers = state.quiz.map(() => ({ chosen: null, timeMs: 0, visits: 0 }));
     state.i = 0;
     state.graded = false;
-    state.startedAt = nowMs();
     state.shownAt = nowMs();
     renderQuestion();
   }
 
   /* =========================
-   * 採点・集計
+   * 採点・分析・結果
    * ========================= */
-  function gradeQuiz() {
-    if (!state.quiz.length) return;
-    if (!state.unlocked) return;
-
-    // 最終滞在分を加算
-    accumulateTime();
-
-    // 未回答がある場合の扱い：そのまま採点（未回答は誤答）
-    const result = computeResult();
-    state.graded = true;
-
-    // 履歴保存
-    appendHistory(result.snapshot);
-
-    // 結果表示
-    renderResult(result);
-
-    // 画面切替
-    const quizView = UI.quizView();
-    const resultView = UI.resultView();
-    if (resultView) showEl(resultView);
-    if (quizView) hideEl(quizView);
-  }
-
   function computeResult() {
-    const perSub = Object.fromEntries(SUBJECTS.map((s) => [s, { total: 0, correct: 0, timeMs: 0 }]));
-    const perDiff = Object.fromEntries(DIFFS.map((d) => [d, { total: 0, correct: 0, timeMs: 0 }]));
+    const perSub = Object.fromEntries(SUBJECTS.map(s => [s, { total: 0, correct: 0, timeMs: 0 }]));
+    const perDiff = Object.fromEntries(DIFFS.map(d => [d, { total: 0, correct: 0, timeMs: 0 }]));
 
     let correct = 0;
     let totalTime = 0;
-
     const times = [];
 
     for (let i = 0; i < state.quiz.length; i++) {
       const q = state.quiz[i];
       const a = state.answers[i];
-
       const chosen = a?.chosen;
       const ok = (chosen !== null && chosen === q.a);
-
       const t = a?.timeMs || 0;
+
       totalTime += t;
       times.push(t);
 
       if (ok) correct++;
 
-      if (perSub[q.sub]) {
-        perSub[q.sub].total++;
-        if (ok) perSub[q.sub].correct++;
-        perSub[q.sub].timeMs += t;
-      }
-      if (perDiff[q.diff]) {
-        perDiff[q.diff].total++;
-        if (ok) perDiff[q.diff].correct++;
-        perDiff[q.diff].timeMs += t;
-      }
+      perSub[q.sub].total++;
+      if (ok) perSub[q.sub].correct++;
+      perSub[q.sub].timeMs += t;
+
+      perDiff[q.diff].total++;
+      if (ok) perDiff[q.diff].correct++;
+      perDiff[q.diff].timeMs += t;
     }
 
     const acc = correct / TOTAL_Q;
     const avgTime = totalTime / TOTAL_Q;
 
     const perSubComputed = {};
-    SUBJECTS.forEach((s) => {
+    SUBJECTS.forEach(s => {
       const p = perSub[s];
       perSubComputed[s] = {
         total: p.total,
@@ -615,7 +503,7 @@
     });
 
     const perDiffComputed = {};
-    DIFFS.forEach((d) => {
+    DIFFS.forEach(d => {
       const p = perDiff[d];
       perDiffComputed[d] = {
         total: p.total,
@@ -625,7 +513,6 @@
       };
     });
 
-    // 相対時間（中央値）で「速い/遅い」を判断（端末差を吸収）
     const sorted = times.slice().sort((a, b) => a - b);
     const median = sorted.length ? sorted[(sorted.length / 2) | 0] : 0;
 
@@ -642,84 +529,72 @@
       perDiff: perDiffComputed,
     };
 
-    return { correct, acc, totalTime, avgTime, perSub: perSubComputed, perDiff: perDiffComputed, analysis, snapshot, median };
-  }
-
-  function fmtPct(x) {
-    return `${Math.round(clamp01(x) * 100)}%`;
-  }
-
-  function fmtSec(ms) {
-    return `${Math.round((ms || 0) / 1000)}秒`;
+    return { correct, acc, totalTime, avgTime, perSub: perSubComputed, perDiff: perDiffComputed, analysis, snapshot };
   }
 
   function buildAnalysisText(perSub, totalAcc, avgTime, medianMs) {
-    // 文章分析（軽量で“それっぽい”より実用優先）
-    // 速い/遅い判定：中央値との比
-    const speed = medianMs ? avgTime / medianMs : 1;
-
-    // 弱点候補：平均より低い教科を抽出（ただし差が小さいなら「弱点なし」）
-    const accs = SUBJECTS.map((s) => perSub[s]?.acc ?? 0);
-    const avgAccSub = accs.reduce((a, b) => a + b, 0) / SUBJECTS.length;
-    const worst = SUBJECTS
-      .map((s) => ({ s, acc: perSub[s]?.acc ?? 0 }))
-      .sort((a, b) => a.acc - b.acc)[0];
-
-    const gap = avgAccSub - (worst?.acc ?? 0);
-
     const lines = [];
+    const speedRatio = medianMs ? avgTime / medianMs : 1;
+
     lines.push(`総合：正答率 ${fmtPct(totalAcc)}、平均解答時間 ${fmtSec(avgTime * 1000)}（目安）。`);
 
-    if (speed < 0.85) {
-      lines.push("解答ペースは速めです。速さを維持しつつ、誤答が出やすい設問では見落とし防止（条件・単位・否定語の確認）を入れると安定します。");
-    } else if (speed > 1.15) {
-      lines.push("解答ペースは慎重寄りです。正解率が高ければ強みですが、時間がかかる設問では方針決定（何を使うか）を先に固定すると改善しやすいです。");
+    if (speedRatio < 0.85) {
+      lines.push("解答ペースは速めです。誤答が出やすい設問では、条件・否定語・単位の確認を1回挟むと安定します。");
+    } else if (speedRatio > 1.15) {
+      lines.push("解答ペースは慎重寄りです。方針決定（どの知識/公式を使うか）を先に固定すると時間短縮が狙えます。");
     } else {
       lines.push("解答ペースは標準的です。正確さとスピードのバランスが取れています。");
     }
 
-    // 弱点の有無
+    const accs = SUBJECTS.map(s => perSub[s]?.acc ?? 0);
+    const avgAccSub = accs.reduce((a, b) => a + b, 0) / SUBJECTS.length;
+    const worst = SUBJECTS.map(s => ({ s, acc: perSub[s]?.acc ?? 0 })).sort((a, b) => a.acc - b.acc)[0];
+    const gap = avgAccSub - (worst?.acc ?? 0);
+
     if (gap < 0.12) {
-      lines.push("教科別の偏りは小さく、現状は「弱点なし（大きな凹みなし）」と判断できます。");
+      lines.push("教科別の凹みは小さく、現状は「弱点なし（大きな偏りなし）」と判断できます。");
     } else {
-      lines.push(`相対的に弱め：${worst.s}（${fmtPct(worst.acc)}）。同教科は「基礎→標準」の取りこぼしを潰すと伸びが出やすいです。`);
+      lines.push(`相対的に弱め：${worst.s}（${fmtPct(worst.acc)}）。この教科は基礎〜標準の取りこぼしを優先して潰すと伸びやすいです。`);
     }
 
-    // 教科別の一言（短く）
-    const top = SUBJECTS
-      .map((s) => ({ s, acc: perSub[s].acc, t: perSub[s].avgTime }))
-      .sort((a, b) => b.acc - a.acc)[0];
-    if (top) lines.push(`強み候補：${top.s}（${fmtPct(top.acc)}）。この教科の解き方を他教科にも転用できると全体が底上げされます。`);
+    const best = SUBJECTS.map(s => ({ s, acc: perSub[s]?.acc ?? 0 })).sort((a, b) => b.acc - a.acc)[0];
+    if (best) lines.push(`強み候補：${best.s}（${fmtPct(best.acc)}）。この教科の解き方を他教科に転用できると全体が底上げされます。`);
 
     return lines.join("\n");
   }
 
-  /* =========================
-   * 結果描画（サマリ・内訳・解説）
-   * ========================= */
+  function gradeQuiz() {
+    if (!state.unlocked) return;
+    if (!state.quiz.length) return;
+    accumulateTime();
+    stopElapsedTimer();
+
+    const res = computeResult();
+    state.graded = true;
+
+    appendHistory(res.snapshot);
+    renderResult(res);
+
+    hide(el.viewQuiz());
+    show(el.viewResult());
+  }
+
   function renderResult(res) {
-    // サマリ
-    const summary = UI.resultSummary();
-    if (summary) {
-      const html = `
+    if (el.resultSummary()) {
+      el.resultSummary().innerHTML = `
         <div class="scoreBig">${res.correct} / ${TOTAL_Q}（${fmtPct(res.acc)}）</div>
         <div class="muted">合計時間：${fmtSec(res.totalTime)}　平均：${fmtSec(res.avgTime * 1000)}</div>
       `;
-      safeSetHTML(summary, html);
     }
+    if (el.analysisText()) el.analysisText().textContent = res.analysis || "";
 
-    // 分析文章
-    safeSetText(UI.analysisText(), res.analysis || "");
-
-    // 内訳
-    const bd = UI.breakdown();
-    if (bd) {
-      let h = `<h3>教科別</h3><div class="grid">`;
-      SUBJECTS.forEach((s) => {
+    if (el.breakdown()) {
+      let h = `<h3>教科別</h3><div class="gridMini">`;
+      SUBJECTS.forEach(s => {
         const p = res.perSub[s];
         h += `
           <div class="cardMini">
-            <div class="k">${s}</div>
+            <div class="k">${escapeHtml(s)}</div>
             <div class="v">${p.correct}/${p.total}（${fmtPct(p.acc)}）</div>
             <div class="muted">平均 ${fmtSec(p.avgTime)}</div>
           </div>
@@ -727,12 +602,12 @@
       });
       h += `</div>`;
 
-      h += `<h3>難易度別</h3><div class="grid">`;
-      DIFFS.forEach((d) => {
+      h += `<h3 style="margin-top:14px;">難易度別</h3><div class="gridMini">`;
+      DIFFS.forEach(d => {
         const p = res.perDiff[d];
         h += `
           <div class="cardMini">
-            <div class="k">${d}</div>
+            <div class="k">${escapeHtml(d)}</div>
             <div class="v">${p.correct}/${p.total}（${fmtPct(p.acc)}）</div>
             <div class="muted">平均 ${fmtSec(p.avgTime)}</div>
           </div>
@@ -740,33 +615,28 @@
       });
       h += `</div>`;
 
-      safeSetHTML(bd, h);
+      el.breakdown().innerHTML = h;
     }
 
-    // レーダー
-    drawRadar(UI.radarCanvas(), SUBJECTS.map((s) => res.perSub[s].acc));
+    drawRadar(el.radarCanvas(), SUBJECTS.map(s => res.perSub[s].acc));
 
-    // 解説ボタン一覧
-    const list = UI.explainList();
-    if (list) {
-      list.innerHTML = "";
-      state.quiz.forEach((q, idx) => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "mini";
-        btn.textContent = `${idx + 1}`;
-        btn.addEventListener("click", () => renderExplanation(idx));
-        list.appendChild(btn);
+    if (el.explainList()) {
+      el.explainList().innerHTML = "";
+      state.quiz.forEach((_, idx) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "mini";
+        b.textContent = `${idx + 1}`;
+        b.addEventListener("click", () => renderExplanation(idx));
+        el.explainList().appendChild(b);
       });
     }
 
-    // 履歴パネル更新（結果表示時に同期）
-    renderHistory();
+    renderHistory(); // 結果更新時に同期
   }
 
   function renderExplanation(idx) {
-    const box = UI.explainBox();
-    if (!box) return;
+    if (!el.explainBox()) return;
     const q = state.quiz[idx];
     const a = state.answers[idx];
     const chosen = a?.chosen;
@@ -775,73 +645,48 @@
     const correct = q.c[q.a];
     const ok = chosen !== null && chosen === q.a;
 
-    const html = `
-      <div class="exTitle">Q${idx + 1}：${q.sub} / ${q.level} / ${q.diff}</div>
+    el.explainBox().innerHTML = `
+      <div class="exTitle">Q${idx + 1}：${escapeHtml(q.sub)} / ${escapeHtml(q.level)} / ${escapeHtml(q.diff)}${q.pattern ? " / #" + escapeHtml(labelPattern(q.pattern)) : ""}</div>
       <div class="exQ">${escapeHtml(q.q || "")}</div>
       <div class="exRow"><span class="tag ${ok ? "ok" : "ng"}">${ok ? "正解" : "不正解"}</span></div>
       <div class="exRow"><b>あなた：</b>${escapeHtml(your)}</div>
       <div class="exRow"><b>正解：</b>${escapeHtml(correct)}</div>
-      <div class="exExp"><b>解説：</b><br>${escapeHtml(q.exp || "（解説なし）").replace(/\n/g, "<br>")}</div>
+      <div class="exRow"><b>解説：</b><br>${escapeHtml(q.exp || "（解説なし）").replace(/\n/g, "<br>")}</div>
     `;
-    safeSetHTML(box, html);
-    showEl(box);
-    box.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  function escapeHtml(s) {
-    return String(s)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;")
-      .replaceAll("'", "&#039;");
+    show(el.explainBox());
+    el.explainBox().scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   /* =========================
-   * 履歴描画（この端末）
+   * 履歴（未プレイでも見える）
    * ========================= */
   function renderHistory() {
-    const panel = UI.historyPanel();
-    const stats = UI.historyStats();
-    const list = UI.historyList();
-    const canvas = UI.historyCanvas();
-
     const hist = loadHistory();
 
-    // stats（全期間平均）
-    if (stats) {
+    if (el.historyStats()) {
       if (!hist.length) {
-        safeSetHTML(stats, `<div class="muted">履歴はまだありません（この端末で採点すると保存されます）。</div>`);
+        el.historyStats().innerHTML = `<div class="muted">履歴はまだありません（この端末で採点すると保存されます）。</div>`;
       } else {
         const avgOverall = hist.reduce((t, h) => t + (h.acc || 0), 0) / hist.length;
-
         const avgPerSub = {};
-        SUBJECTS.forEach((s) => {
-          const vals = hist.map((h) => h.perSub?.[s]?.acc).filter((x) => typeof x === "number");
+        SUBJECTS.forEach(s => {
+          const vals = hist.map(h => h.perSub?.[s]?.acc).filter(x => typeof x === "number");
           avgPerSub[s] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
         });
 
-        let htm = `
-          <div class="muted">全期間（${hist.length}回）の平均</div>
-          <div class="scoreBig">${fmtPct(avgOverall)}</div>
-          <div class="grid">
-        `;
-        SUBJECTS.forEach((s) => {
-          htm += `
-            <div class="cardMini">
-              <div class="k">${s}</div>
-              <div class="v">${fmtPct(avgPerSub[s])}</div>
-            </div>
-          `;
+        let htm = `<div class="muted">全期間（${hist.length}回）の平均</div><div class="scoreBig">${fmtPct(avgOverall)}</div><div class="gridMini">`;
+        SUBJECTS.forEach(s => {
+          htm += `<div class="cardMini"><div class="k">${escapeHtml(s)}</div><div class="v">${fmtPct(avgPerSub[s])}</div></div>`;
         });
         htm += `</div>`;
-        safeSetHTML(stats, htm);
+        el.historyStats().innerHTML = htm;
       }
     }
 
-    // list（直近一覧）
-    if (list) {
-      list.innerHTML = "";
+    drawHistoryLine(el.historyCanvas(), hist);
+
+    if (el.historyList()) {
+      el.historyList().innerHTML = "";
       hist.slice(0, 10).forEach((h, idx) => {
         const d = new Date(h.ts);
         const row = document.createElement("div");
@@ -849,36 +694,26 @@
         row.innerHTML = `
           <div class="hL">${idx + 1}</div>
           <div class="hM">
-            <div class="hTop">${d.toLocaleString()}</div>
+            <div class="hTop">${escapeHtml(d.toLocaleString())}</div>
             <div class="muted">正答率 ${fmtPct(h.acc)}（${h.correct}/${h.total}）</div>
           </div>
         `;
-        list.appendChild(row);
+        el.historyList().appendChild(row);
       });
-    }
-
-    // 最近10回折れ線
-    drawHistoryLine(canvas, hist);
-
-    // panelが表示されていても中身は更新される
-    if (panel && hist.length === 0) {
-      // 表示は任意（ここは静かに）
     }
   }
 
-  function toggleHistory(openForce = null) {
-    const panel = UI.historyPanel();
+  function toggleHistory(forceOpen = null) {
+    const panel = el.historyPanel();
     if (!panel) return;
-
-    const isHidden = panel.style.display === "none" || getComputedStyle(panel).display === "none";
-    const open = openForce === null ? isHidden : !!openForce;
-
+    const hidden = panel.style.display === "none" || getComputedStyle(panel).display === "none";
+    const open = forceOpen === null ? hidden : !!forceOpen;
     if (open) {
-      showEl(panel);
+      show(panel);
       renderHistory();
       panel.scrollIntoView({ behavior: "smooth", block: "start" });
     } else {
-      hideEl(panel);
+      hide(panel);
     }
   }
 
@@ -888,34 +723,18 @@
     renderHistory();
   }
 
-  /* =========================
-   * 追加要望：右上「履歴」ボタンで未プレイでも開く
-   * ========================= */
   function openHistoryFromTop() {
-    // ロック未解除でも「履歴閲覧」はOKにするか？
-    // 仕様上、履歴だけ見られても致命ではないのでOK（合言葉で“プレイ開始”を制御）
-    // ただし、完全に見せたくないなら以下を有効化：
-    // if (!state.unlocked) { alert("先にロック解除してください。"); return; }
-
-    // 結果ビューがあれば表示（履歴パネルが結果側にある構成に対応）
-    const resultView = UI.resultView();
-    const quizView = UI.quizView();
-
-    if (resultView) showEl(resultView);
-    if (quizView) hideEl(quizView);
-
-    // 既存の履歴トグルボタンがあればそれを使う
-    const inner = UI.btnToggleHistory();
-    if (inner) inner.click();
-    else toggleHistory(true);
+    // 未解除でも履歴閲覧は許可（合言葉は“プレイ開始”の制御）
+    hide(el.viewQuiz());
+    show(el.viewResult());
+    toggleHistory(true);
   }
 
   /* =========================
-   * チャート描画（canvas）
+   * チャート：レーダー
    * ========================= */
   function drawRadar(canvas, values01) {
     if (!canvas || !canvas.getContext) return;
-
     const ctx = canvas.getContext("2d");
     const w = canvas.width = canvas.clientWidth || 360;
     const h = canvas.height = canvas.clientHeight || 260;
@@ -926,7 +745,6 @@
     const cy = h / 2 + 10;
     const R = Math.min(w, h) * 0.33;
 
-    // ガイド（5段）
     ctx.strokeStyle = "rgba(0,0,0,0.12)";
     for (let k = 1; k <= 5; k++) {
       const r = (R * k) / 5;
@@ -942,7 +760,6 @@
       ctx.stroke();
     }
 
-    // 軸＋ラベル
     ctx.fillStyle = "rgba(0,0,0,0.72)";
     ctx.font = "12px sans-serif";
     SUBJECTS.forEach((label, i) => {
@@ -957,7 +774,6 @@
       ctx.fillText(label, x - 10, y + 4);
     });
 
-    // データポリゴン
     ctx.beginPath();
     values01.forEach((v, i) => {
       const ang = (-Math.PI / 2) + (i * 2 * Math.PI) / 5;
@@ -975,16 +791,17 @@
     ctx.stroke();
   }
 
+  /* =========================
+   * チャート：最近10回（折れ線）
+   * ========================= */
   function drawHistoryLine(canvas, hist) {
     if (!canvas || !canvas.getContext) return;
-
     const ctx = canvas.getContext("2d");
     const w = canvas.width = canvas.clientWidth || 520;
     const h = canvas.height = canvas.clientHeight || 220;
-
     ctx.clearRect(0, 0, w, h);
 
-    const data = hist.slice(0, 10).reverse(); // 古い→新しい
+    const data = hist.slice(0, 10).reverse();
     if (!data.length) {
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.font = "12px sans-serif";
@@ -996,7 +813,6 @@
     const plotW = w - padL - padR;
     const plotH = h - padT - padB;
 
-    // 軸
     ctx.strokeStyle = "rgba(0,0,0,0.12)";
     ctx.beginPath();
     ctx.moveTo(padL, padT);
@@ -1004,7 +820,6 @@
     ctx.lineTo(padL + plotW, padT + plotH);
     ctx.stroke();
 
-    // 0/50/100
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.font = "11px sans-serif";
     [0, 0.5, 1].forEach((p) => {
@@ -1020,7 +835,6 @@
     const xs = data.map((_, i) => padL + (plotW * i) / (data.length - 1 || 1));
     const ys = data.map((d) => padT + plotH * (1 - clamp01(d.acc)));
 
-    // 折れ線
     ctx.strokeStyle = "rgba(20,60,160,0.65)";
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -1031,7 +845,6 @@
     });
     ctx.stroke();
 
-    // 点
     ctx.fillStyle = "rgba(20,60,160,0.75)";
     xs.forEach((x, i) => {
       ctx.beginPath();
@@ -1039,7 +852,6 @@
       ctx.fill();
     });
 
-    // Xラベル（回数）
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.font = "11px sans-serif";
     data.forEach((_, i) => {
@@ -1050,41 +862,27 @@
   }
 
   /* =========================
-   * イベントバインド
+   * イベント
    * ========================= */
   function bind() {
-    // ロック
-    UI.btnUnlock()?.addEventListener("click", onUnlock);
-    UI.passInput()?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") onUnlock();
-    });
+    el.btnUnlock()?.addEventListener("click", onUnlock);
+    el.passInput()?.addEventListener("keydown", (e) => { if (e.key === "Enter") onUnlock(); });
 
-    // クイズ操作
-    UI.btnNew()?.addEventListener("click", newQuiz);
-    UI.btnReset()?.addEventListener("click", resetAnswers);
-    UI.btnGrade()?.addEventListener("click", gradeQuiz);
-    UI.btnPrev()?.addEventListener("click", goPrev);
-    UI.btnNext()?.addEventListener("click", goNext);
+    el.btnHistoryTop()?.addEventListener("click", openHistoryFromTop);
 
-    // 履歴（結果内）
-    UI.btnToggleHistory()?.addEventListener("click", () => toggleHistory());
-    UI.btnClearHistory()?.addEventListener("click", clearHistory);
+    el.btnNew()?.addEventListener("click", newQuiz);
+    el.btnReset()?.addEventListener("click", resetAnswers);
+    el.btnGrade()?.addEventListener("click", gradeQuiz);
 
-    // 右上の履歴ボタン
-    UI.btnHistoryTop()?.addEventListener("click", openHistoryFromTop);
+    el.btnPrev()?.addEventListener("click", goPrev);
+    el.btnNext()?.addEventListener("click", goNext);
 
-    // 初期表示
-    state.unlocked = isUnlocked();
+    el.btnToggleHistory()?.addEventListener("click", () => toggleHistory());
+    el.btnClearHistory()?.addEventListener("click", clearHistory);
+
     updateLockUI();
-
-    // 解除済みなら初回クイズ生成
-    if (state.unlocked) {
-      // フィルタカード/クイズビューが見える構成に合わせてクイズ生成
-      newQuiz();
-    } else {
-      // 未解除でも履歴は見たい人がいるので、履歴だけ先に描画
-      renderHistory();
-    }
+    // 未解除でも履歴の中身は描ける（ただし panel は閉じたまま）
+    renderHistory();
   }
 
   document.addEventListener("DOMContentLoaded", bind);
