@@ -1,7 +1,7 @@
 /* sw.template.js
- * Actionsが 4b615cc を差し替えて sw.js を生成する。
+ * Actionsが 2f55223 を差し替えて sw.js を生成する。
  */
-const CACHE_NAME = "school-quiz-4b615cc";
+const CACHE_NAME = "school-quiz-2f55223";
 const ASSETS = [
   "./",
   "./index.html",
