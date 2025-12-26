@@ -138,6 +138,7 @@
     shownAt: 0,
     timer: null,
     graded: false,
+    explainActive: null, // ★追加：解説番号のactive表示用
   };
 
   /* =========================
@@ -345,6 +346,7 @@
     state.i = 0;
     state.graded = false;
     state.shownAt = nowMs();
+    state.explainActive = null;
 
     show(el.viewQuiz());
     hide(el.viewResult());
@@ -453,6 +455,7 @@
     state.i = 0;
     state.graded = false;
     state.shownAt = nowMs();
+    state.explainActive = null;
     renderQuestion();
   }
 
@@ -536,7 +539,8 @@
     const lines = [];
     const speedRatio = medianMs ? avgTime / medianMs : 1;
 
-    lines.push(`総合：正答率 ${fmtPct(totalAcc)}、平均解答時間 ${fmtSec(avgTime * 1000)}（目安）。`);
+    // ★修正：avgTime は ms なので *1000 しない
+    lines.push(`総合：正答率 ${fmtPct(totalAcc)}、平均解答時間 ${fmtSec(avgTime)}（目安）。`);
 
     if (speedRatio < 0.85) {
       lines.push("解答ペースは速めです。誤答が出やすい設問では、条件・否定語・単位の確認を1回挟むと安定します。");
@@ -583,7 +587,8 @@
     if (el.resultSummary()) {
       el.resultSummary().innerHTML = `
         <div class="scoreBig">${res.correct} / ${TOTAL_Q}（${fmtPct(res.acc)}）</div>
-        <div class="muted">合計時間：${fmtSec(res.totalTime)}　平均：${fmtSec(res.avgTime * 1000)}</div>
+        <!-- ★修正：avgTime は ms なので *1000 しない -->
+        <div class="muted">合計時間：${fmtSec(res.totalTime)}　平均：${fmtSec(res.avgTime)}</div>
       `;
     }
     if (el.analysisText()) el.analysisText().textContent = res.analysis || "";
@@ -620,12 +625,22 @@
 
     drawRadar(el.radarCanvas(), SUBJECTS.map(s => res.perSub[s].acc));
 
+    // 解説番号：正誤/未回答で色分け + active
     if (el.explainList()) {
       el.explainList().innerHTML = "";
       state.quiz.forEach((_, idx) => {
+        const q = state.quiz[idx];
+        const a = state.answers[idx];
+        const chosen = a?.chosen ?? null;
+
+        const isNA = (chosen === null);
+        const isOK = (!isNA && chosen === q.a);
+        const statusClass = isNA ? "na" : (isOK ? "ok" : "ng");
+        const activeClass = (state.explainActive === idx) ? " active" : "";
+
         const b = document.createElement("button");
         b.type = "button";
-        b.className = "mini";
+        b.className = `mini ${statusClass}${activeClass}`;
         b.textContent = `${idx + 1}`;
         b.addEventListener("click", () => renderExplanation(idx));
         el.explainList().appendChild(b);
@@ -655,6 +670,14 @@
     `;
     show(el.explainBox());
     el.explainBox().scrollIntoView({ behavior: "smooth", block: "start" });
+
+    // ★active 更新（番号一覧の active 表示だけ更新）
+    state.explainActive = idx;
+    if (el.explainList()) {
+      el.explainList().querySelectorAll(".mini").forEach((btn, i) => {
+        btn.classList.toggle("active", i === idx);
+      });
+    }
   }
 
   /* =========================
