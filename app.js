@@ -145,6 +145,13 @@
   }
   const BANK = loadBank();
 
+  console.log("[BOOT] window.BANK:", Array.isArray(window.BANK), (window.BANK||[]).length);
+  console.log("[BOOT] BANK(loaded):", BANK.length);
+  console.table(["国語","数学","英語","理科","社会"].map(s=>({
+    s,
+    n: BANK.filter(q=>q?.sub===s).length
+  })));
+
   /* =========================
    * 状態
    * ========================= */
