@@ -4,9 +4,10 @@
   /* =========================
    * 基本設定
    * ========================= */
-  const PASSPHRASE = String.fromCharCode(48, 50, 49, 55); // "0217"（表示しない）
+  const PASSPHRASE = String.fromCharCode(48, 50, 49, 55); // "0217"
   const LS_UNLOCK = "quiz_unlock_v2";
   const LS_HISTORY = "quiz_history_v2";
+  const LS_LAST_UIDS = "quiz_last_uids_v1"; // 直前回のuid集合（配列で保存）
   const HISTORY_MAX = 50;
 
   const SUBJECTS = ["国語", "数学", "英語", "理科", "社会"];
@@ -15,6 +16,18 @@
 
   const DIFF_TARGET = { "基礎": 0.2, "標準": 0.5, "発展": 0.3 };
   const DIFFS = ["基礎", "標準", "発展"];
+
+  // avoidSimilar の「実効」用：原則上限（ただし成立しない教科は自動緩和）
+  const DEFAULT_MAX_PER_GROUP = 2;
+
+  // 直前回と同じuidを「強く避ける」ペナルティ
+  const PENALTY_LAST_UID = 300; // 大きいほど避ける
+
+  // patternGroup偏りペナルティ
+  const PENALTY_GROUP_COUNT = 15;
+
+  // 相対的ランダム（同点を崩す）
+  const JITTER = 0.001;
 
   // pattern は内部コードのまま保持し、表示だけ日本語にする
   const PATTERN_LABEL = {
@@ -49,7 +62,7 @@
   const clamp01 = (x) => Math.max(0, Math.min(1, x));
   const fmtPct = (x) => `${Math.round(clamp01(x) * 100)}%`;
   const fmtSec = (ms) => `${Math.round((ms || 0) / 1000)}秒`;
-  const fmtSec1 = (ms) => `${(ms / 1000).toFixed(1)}s`;
+  const fmtSec1 = (ms) => `${((ms || 0) / 1000).toFixed(1)}s`;
 
   const el = {
     unlockCard: () => $("unlockCard"),
@@ -108,9 +121,8 @@
   }
 
   /* =========================
-   * bank.js ロード
+   * bank.js ロード（uid/patternGroup 保険）
    * ========================= */
-  // bank.js 側で uid/patternGroup を付けるが、古いbankでも動くよう保険
   function normalizeText(s) {
     return String(s ?? "")
       .normalize("NFKC")
@@ -133,7 +145,6 @@
     if (!bank && typeof window.buildBank === "function") bank = window.buildBank();
     if (!Array.isArray(bank)) bank = [];
 
-    // key/uid/patternGroup 付与（無ければ）
     bank.forEach((q, i) => {
       if (!q) return;
       if (!q.key) q.key = `${q.sub}|${q.level}|${q.diff}|${q.pattern || "p"}|${(q.q || "").slice(0, 24)}|${i}`;
@@ -141,16 +152,28 @@
       if (!q.uid) q.uid = makeUid(q);
     });
 
-    return bank;
+    // bank側でdedupe済みのはずだが、念のためuid重複が残っていれば落とす
+    const seen = new Set();
+    const ded = [];
+    for (const q of bank) {
+      if (!q?.uid) continue;
+      if (seen.has(q.uid)) continue;
+      seen.add(q.uid);
+      ded.push(q);
+    }
+
+    // 簡易ログ（BANK健全性確認）
+    const total = ded.length;
+    const perSub = SUBJECTS.map(s => {
+      const arr = ded.filter(q => q.sub === s);
+      return { sub: s, total: arr.length, groups: new Set(arr.map(x => x.patternGroup)).size };
+    });
+    console.log("[BANK loaded] total(uid-deduped):", total);
+    console.table(perSub);
+
+    return ded;
   }
   const BANK = loadBank();
-
-  console.log("[BOOT] window.BANK:", Array.isArray(window.BANK), (window.BANK||[]).length);
-  console.log("[BOOT] BANK(loaded):", BANK.length);
-  console.table(["国語","数学","英語","理科","社会"].map(s=>({
-    s,
-    n: BANK.filter(q=>q?.sub===s).length
-  })));
 
   /* =========================
    * 状態
@@ -163,11 +186,11 @@
     shownAt: 0,
     timer: null,
     graded: false,
-    explainActive: null, // 解説番号のactive表示用
+    explainActive: null,
   };
 
   /* =========================
-   * LocalStorage（履歴）
+   * LocalStorage（履歴＋直前回UID）
    * ========================= */
   const isUnlocked = () => localStorage.getItem(LS_UNLOCK) === "1";
   const setUnlocked = () => localStorage.setItem(LS_UNLOCK, "1");
@@ -189,14 +212,27 @@
     saveHistory(arr);
   }
 
+  function loadLastUids() {
+    try {
+      const raw = localStorage.getItem(LS_LAST_UIDS);
+      const arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? new Set(arr.map(String)) : new Set();
+    } catch {
+      return new Set();
+    }
+  }
+  function saveLastUids(uids) {
+    try {
+      const arr = Array.from(uids).slice(0, 200); // 念のため
+      localStorage.setItem(LS_LAST_UIDS, JSON.stringify(arr));
+    } catch {}
+  }
+
   /* =========================
-   * UI 制御（重要：右上ボタン禁止マーク対策）
+   * UI 制御
    * ========================= */
   function setTopButtonsEnabled(enabled) {
-    // 履歴は常に押せる（未解除でも過去履歴があるなら見られる）
     if (el.btnHistoryTop()) el.btnHistoryTop().disabled = false;
-
-    // 他3つはロック解除後のみ
     if (el.btnNew()) el.btnNew().disabled = !enabled;
     if (el.btnReset()) el.btnReset().disabled = !enabled;
     if (el.btnGrade()) el.btnGrade().disabled = !enabled;
@@ -214,7 +250,6 @@
       show(el.unlockCard());
       hide(el.filterCard());
       hide(el.viewQuiz());
-      // result は「履歴閲覧」で使うので、ここで隠し切らない（履歴ボタンで開く）
       hide(el.viewResult());
     }
 
@@ -252,11 +287,12 @@
     return {
       avoidSimilar: el.chkAvoidSimilar() ? !!el.chkAvoidSimilar().checked : true,
       noDup: el.chkNoDup() ? !!el.chkNoDup().checked : true,
+      maxPerGroup: DEFAULT_MAX_PER_GROUP,
     };
   }
 
   /* =========================
-   * 出題（重複禁止＋テンプレ偏り回避＋不足時フォールバック）
+   * 出題（実効：uid重複禁止＋patternGroup上限＋直前回回避）
    * ========================= */
   function shuffle(a) {
     for (let i = a.length - 1; i > 0; i--) {
@@ -266,25 +302,28 @@
     return a;
   }
 
-  function scoreCandidate(q, usedUids, patternGroupCount, opts) {
+  function scoreCandidate(q, groupCount, lastUids) {
     let s = 0;
 
-    // noDup：内容ベース（uid）重複を禁止
-    if (opts.noDup && usedUids.has(q.uid)) s += 1e9;
+    // 直前回回避（強めペナルティ）
+    if (lastUids.has(q.uid)) s += PENALTY_LAST_UID;
 
-    // avoidSimilar：pattern ではなく patternGroup で偏りを抑える
-    if (opts.avoidSimilar) {
-      const g = q.patternGroup || q.pattern || "p";
-      s += (patternGroupCount.get(g) || 0) * 10;
-    }
+    // patternGroup偏りペナルティ（カウントが増えるほど嫌う）
+    const g = q.patternGroup || q.pattern || "p";
+    s += (groupCount.get(g) || 0) * PENALTY_GROUP_COUNT;
 
-    s += Math.random();
+    // 同点崩し
+    s += Math.random() * JITTER;
     return s;
   }
 
-  function choose5ForSubject(subject, grades, diffs, opts, usedUids, patternGroupCount) {
+  function distinctGroups(arr) {
+    return new Set(arr.map(q => q.patternGroup || q.pattern || "p")).size;
+  }
+
+  function choose5ForSubject(subject, grades, diffs, opts, usedUids, groupCount, lastUids) {
     // 基本候補
-    let cands = BANK.filter(q =>
+    let pool = BANK.filter(q =>
       q && q.sub === subject &&
       grades.includes(q.level) &&
       diffs.includes(q.diff) &&
@@ -292,23 +331,31 @@
       typeof q.a === "number"
     );
 
-    // 不足時フォールバック（止めない）
-    // 1) diff を広げる → 2) grade を広げる → 3) それでもダメなら subject 全体から拾う
-    if (cands.length < QUIZ_PER_SUBJECT) {
+    // 不足時フォールバック：diff→gradeを広げる
+    if (pool.length < QUIZ_PER_SUBJECT) {
       const allDiffs = ["基礎", "標準", "発展"];
-      const allGrades = ["小", "中"];
-      cands = BANK.filter(q => q && q.sub === subject && grades.includes(q.level) && allDiffs.includes(q.diff));
-      if (cands.length < QUIZ_PER_SUBJECT) {
-        cands = BANK.filter(q => q && q.sub === subject && allGrades.includes(q.level) && allDiffs.includes(q.diff));
+      pool = BANK.filter(q => q && q.sub === subject && grades.includes(q.level) && allDiffs.includes(q.diff));
+      if (pool.length < QUIZ_PER_SUBJECT) {
+        const allGrades = ["小", "中"];
+        pool = BANK.filter(q => q && q.sub === subject && allGrades.includes(q.level) && allDiffs.includes(q.diff));
       }
     }
-
-    if (cands.length < QUIZ_PER_SUBJECT) {
-      // bank側がまだ薄い
-      throw new Error(`${subject} の問題が不足しています（bank.js を増量してください）。`);
+    if (pool.length < QUIZ_PER_SUBJECT) {
+      throw new Error(`${subject} の問題が不足しています（BANKの素材不足）。`);
     }
 
-    // 難易度比率をなるべく維持（教科内）
+    // noDup（実効）：既に選んだuidは候補から除外
+    if (opts.noDup) pool = pool.filter(q => !usedUids.has(q.uid));
+
+    // avoidSimilar 上限：成立しない教科のために「教科内群数」から自動上限を算出
+    const gN = distinctGroups(pool);
+    let localMaxPerGroup = opts.avoidSimilar ? Math.max(opts.maxPerGroup, Math.ceil(QUIZ_PER_SUBJECT / Math.max(1, gN))) : 999;
+
+    if (opts.avoidSimilar && localMaxPerGroup !== opts.maxPerGroup) {
+      console.log(`[quiz] ${subject} patternGroupが少ないため maxPerGroup を ${opts.maxPerGroup}→${localMaxPerGroup} に自動緩和（groups=${gN}）`);
+    }
+
+    // 難易度比率（教科内）
     const ideal = {
       "基礎": Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["基礎"]),
       "標準": Math.round(QUIZ_PER_SUBJECT * DIFF_TARGET["標準"]),
@@ -316,31 +363,67 @@
     };
 
     const chosen = [];
-    let pool = cands.slice();
+    const localGroupCount = new Map();
 
     for (let k = 0; k < QUIZ_PER_SUBJECT; k++) {
+      // 難易度優先を決める
       const counts = { "基礎": 0, "標準": 0, "発展": 0 };
       chosen.forEach(q => counts[q.diff]++);
-
       const preferred = DIFFS.slice().sort((a, b) => (ideal[b] - counts[b]) - (ideal[a] - counts[a]))[0];
-      let candidates = pool.filter(q => q.diff === preferred);
-      if (!candidates.length) candidates = pool;
 
+      // まず希望diffで候補を作る
+      let cands = pool.filter(q => q.diff === preferred);
+      if (!cands.length) cands = pool.slice();
+
+      // avoidSimilar（実効）：patternGroup上限に引っかかるものは候補から除外（ハード制約）
+      if (opts.avoidSimilar) {
+        cands = cands.filter(q => {
+          const g = q.patternGroup || q.pattern || "p";
+          const currentGlobal = groupCount.get(g) || 0;
+          const currentLocal = localGroupCount.get(g) || 0;
+          // globalは“全25問”での偏り、localは“この教科の5問”での偏り
+          // 厳しすぎると成立しないので、上限は localMaxPerGroup で揃える
+          return (currentLocal < localMaxPerGroup) && (currentGlobal < Math.max(localMaxPerGroup, opts.maxPerGroup));
+        });
+      }
+
+      // 直前回のuidを「禁止」までにすると成立しない場合があるため、ここは基本ペナルティで避ける
+      // ただし候補が十分にある時だけ“軽い除外”を行う（成立性を壊さない）
+      if (lastUids.size && cands.length > 25) {
+        const filtered = cands.filter(q => !lastUids.has(q.uid));
+        if (filtered.length >= 5) cands = filtered;
+      }
+
+      if (!cands.length) {
+        // 成立しない場合は「上限を一段緩め」て救済（ログを出す）
+        if (opts.avoidSimilar) {
+          localMaxPerGroup++;
+          console.warn(`[quiz] ${subject} で候補枯渇 → maxPerGroup を ${localMaxPerGroup} に緩和して続行`);
+          k--; // 同じ問題番号をもう一度選び直す
+          continue;
+        }
+        // それでもダメならプール全体で救済
+        cands = pool.slice();
+      }
+
+      // 最良候補（スコア最小）を選ぶ
       let best = null, bestScore = Infinity;
-      for (const q of candidates) {
-        const s = scoreCandidate(q, usedUids, patternGroupCount, opts);
+      for (const q of cands) {
+        const s = scoreCandidate(q, groupCount, lastUids);
         if (s < bestScore) { bestScore = s; best = q; }
       }
 
       chosen.push(best);
+
+      // usedUids & groupCount を更新
       usedUids.add(best.uid);
 
       const g = best.patternGroup || best.pattern || "p";
-      patternGroupCount.set(g, (patternGroupCount.get(g) || 0) + 1);
+      groupCount.set(g, (groupCount.get(g) || 0) + 1);
+      localGroupCount.set(g, (localGroupCount.get(g) || 0) + 1);
 
-      // 1) 同一オブジェクト再抽選は常に防ぐ（key）
-      // 2) noDup 有効なら内容ベースでも排除（uid）
-      pool = pool.filter(q => q.key !== best.key && (!opts.noDup || q.uid !== best.uid));
+      // プールから排除（noDup実効）
+      pool = pool.filter(q => q.uid !== best.uid);
     }
 
     return chosen;
@@ -350,19 +433,34 @@
     const grades = getSelectedGrades();
     const diffs = getSelectedDiffs();
     const opts = getOptions();
+    const lastUids = loadLastUids();
 
     const usedUids = new Set();
-    const patternGroupCount = new Map();
+    const groupCount = new Map();
     const quiz = [];
 
     for (const sub of SUBJECTS) {
-      quiz.push(...choose5ForSubject(sub, grades, diffs, opts, usedUids, patternGroupCount));
+      quiz.push(...choose5ForSubject(sub, grades, diffs, opts, usedUids, groupCount, lastUids));
     }
     shuffle(quiz);
 
-    if (quiz.length !== TOTAL_Q) {
-      throw new Error(`出題生成に失敗（${quiz.length}/${TOTAL_Q}）`);
+    // 生成確認ログ：patternGroup分布 + 直前回との被り
+    const groupDist = {};
+    for (const q of quiz) {
+      const g = q.patternGroup || q.pattern || "p";
+      groupDist[g] = (groupDist[g] || 0) + 1;
     }
+    console.log("[quiz] patternGroup distribution (this quiz):");
+    console.table(Object.entries(groupDist).sort((a,b)=>b[1]-a[1]).map(([g,n])=>({patternGroup:g,n})));
+
+    if (lastUids.size) {
+      const overlap = quiz.filter(q => lastUids.has(q.uid)).length;
+      console.log(`[quiz] overlap vs lastQuiz: ${overlap}/${TOTAL_Q} (${Math.round((overlap/TOTAL_Q)*100)}%)`);
+    } else {
+      console.log("[quiz] overlap vs lastQuiz: (no lastQuiz stored)");
+    }
+
+    if (quiz.length !== TOTAL_Q) throw new Error(`出題生成に失敗（${quiz.length}/${TOTAL_Q}）`);
     return quiz;
   }
 
@@ -377,6 +475,11 @@
       alert(String(e?.message || e));
       return;
     }
+
+    // 「直前回」を次回のために保存（生成時点で保存＝未採点でも“次の新規”で被りにくい）
+    const currentUids = new Set(state.quiz.map(q => q.uid));
+    saveLastUids(currentUids);
+
     state.answers = state.quiz.map(() => ({ chosen: null, timeMs: 0, visits: 0 }));
     state.i = 0;
     state.graded = false;
@@ -427,7 +530,6 @@
     if (el.qNo()) el.qNo().textContent = `Q${state.i + 1} / ${TOTAL_Q}`;
     if (el.progressFill()) el.progressFill().style.width = `${Math.round(((state.i + 1) / TOTAL_Q) * 100)}%`;
 
-    // chips（patternは日本語表示）
     if (el.qChips()) {
       const chips = [
         q.sub,
@@ -440,7 +542,6 @@
 
     if (el.qText()) el.qText().textContent = q.q || "";
 
-    // choices（必ず A/B/C/D + 選択肢文）
     if (el.choices()) {
       el.choices().innerHTML = "";
       const letters = ["A", "B", "C", "D"];
@@ -574,7 +675,6 @@
     const lines = [];
     const speedRatio = medianMs ? avgTime / medianMs : 1;
 
-    // avgTime は ms（*1000しない）
     lines.push(`総合：正答率 ${fmtPct(totalAcc)}、平均解答時間 ${fmtSec(avgTime)}（目安）。`);
 
     if (speedRatio < 0.85) {
@@ -659,7 +759,6 @@
 
     drawRadar(el.radarCanvas(), SUBJECTS.map(s => res.perSub[s].acc));
 
-    // 解説番号：正誤/未回答で色分け + active
     if (el.explainList()) {
       el.explainList().innerHTML = "";
       state.quiz.forEach((_, idx) => {
@@ -681,7 +780,7 @@
       });
     }
 
-    renderHistory(); // 結果更新時に同期
+    renderHistory();
   }
 
   function renderExplanation(idx) {
@@ -705,7 +804,6 @@
     show(el.explainBox());
     el.explainBox().scrollIntoView({ behavior: "smooth", block: "start" });
 
-    // active 表示更新（番号一覧の見た目だけ更新）
     state.explainActive = idx;
     if (el.explainList()) {
       el.explainList().querySelectorAll(".mini").forEach((btn, i) => {
@@ -781,7 +879,6 @@
   }
 
   function openHistoryFromTop() {
-    // 未解除でも履歴閲覧は許可（合言葉は“プレイ開始”の制御）
     hide(el.viewQuiz());
     show(el.viewResult());
     toggleHistory(true);
@@ -938,7 +1035,6 @@
     el.btnClearHistory()?.addEventListener("click", clearHistory);
 
     updateLockUI();
-    // 未解除でも履歴の中身は描ける（ただし panel は閉じたまま）
     renderHistory();
   }
 
