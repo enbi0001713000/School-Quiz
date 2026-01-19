@@ -4,52 +4,52 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="theme-color" content="#0b3a79" />
-  <title>義務教育 5教科クイズ</title>
+  <title>義務教育 5教科クイズ（25問）</title>
 
+  <!-- PWA -->
   <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="favicon.ico" />
+
   <link rel="stylesheet" href="styles.css" />
 </head>
-
 <body>
-  <header class="topbar">
+
+  <!-- Top Bar -->
+  <div class="topbar">
     <div class="brand">
       <div class="logo">Q</div>
       <div class="brandText">
-        <div class="title">義務教育 5教科クイズ</div>
-        <div class="subtitle">国数英理社 / 25問（各5問）・難易度タグ対応・結果分析＆レーダー・履歴（この端末）</div>
+        <div class="title">義務教育 5教科クイズ（25問）</div>
+        <div class="subtitle">学習×自己分析（履歴・レーダー）</div>
       </div>
     </div>
 
     <div class="topActions">
       <button id="btnHistoryTop" class="btn ghost" type="button">履歴</button>
-      <button id="btnNew" class="btn" type="button" disabled>新しいクイズ</button>
-      <button id="btnReset" class="btn ghost" type="button" disabled>解答リセット</button>
-      <button id="btnGrade" class="btn primary" type="button" disabled>採点して結果へ</button>
+      <button id="btnNew" class="btn primary" type="button">新しいクイズ</button>
+      <button id="btnReset" class="btn" type="button">リセット</button>
+      <button id="btnGrade" class="btn" type="button">採点</button>
     </div>
-  </header>
+  </div>
 
   <main class="page">
+
     <!-- Unlock -->
-    <section id="unlockCard" class="card">
-      <h2>合言葉でロック解除</h2>
-      <p class="muted">
-        公開リンクで遊べる版です。合言葉を入力すると開始できます（合言葉はソースに露出しにくい形で管理）。
-      </p>
-      <div class="row">
-        <input id="passInput" class="input" type="password" inputmode="numeric" placeholder="合言葉を入力" />
-        <button id="btnUnlock" class="btn primary" type="button">ロック解除</button>
+    <section id="unlockCard" class="card" style="display:none;">
+      <h2>ロック解除</h2>
+      <div class="muted small">合言葉を入力するとクイズを開始できます（履歴の閲覧は常に可能）。</div>
+      <div class="row wrap" style="margin-top:12px;">
+        <input id="passInput" class="input" type="password" inputmode="numeric" placeholder="合言葉" />
+        <button id="btnUnlock" class="btn primary" type="button">解除</button>
       </div>
-      <!-- ★ヒント表示は“出さない”仕様（削除済み） -->
     </section>
 
     <!-- Filters -->
     <section id="filterCard" class="card" style="display:none;">
-      <h2>出題フィルタ（タグ）</h2>
-      <p class="muted">難易度や学年帯のバランスを調整できます（未選択は全対象）。</p>
-
-      <div class="grid2">
+      <h2>出題フィルタ</h2>
+      <div class="grid2" style="margin-top:10px;">
         <div class="panel">
-          <div class="panelTitle">学年帯</div>
+          <div class="panelTitle">学年</div>
           <label class="chk"><input id="chkGradeE" type="checkbox" checked /> 小</label>
           <label class="chk"><input id="chkGradeJ" type="checkbox" checked /> 中</label>
         </div>
@@ -62,17 +62,31 @@
         </div>
       </div>
 
-      <div class="row wrap">
-        <label class="chk"><input id="chkAvoidSimilar" type="checkbox" checked /> 似たパターンの連発を避ける（おすすめ）</label>
-        <label class="chk"><input id="chkNoDup" type="checkbox" checked /> 25問内の問題かぶり禁止（おすすめ）</label>
-      </div>
+      <div class="grid2" style="margin-top:12px;">
+        <div class="panel">
+          <div class="panelTitle">偏り抑制</div>
+          <label class="chk">
+            <input id="chkAvoidSimilar" type="checkbox" checked />
+            似たパターン（patternGroup）連発を避ける
+          </label>
+          <label class="chk">
+            <input id="chkNoDup" type="checkbox" checked />
+            25問内の重複（uid）を禁止
+          </label>
+          <div class="muted small">※ bank.js 側で uid / patternGroup が不足していても app.js 側で補完する設計です。</div>
+        </div>
 
-      <div class="muted small">
-        ※問題が不足する場合は、条件を自動で緩めて（フォールバック）出題します。
+        <div class="panel">
+          <div class="panelTitle">メモ</div>
+          <div class="muted small">
+            「新しいクイズ」を押すたびに抽選し直します。<br/>
+            不自然な偏りが出る場合は、問題バンクのテンプレ数不足（patternGroupの種類が少ない）か、抽選制約の競合が原因になりやすいです。
+          </div>
+        </div>
       </div>
     </section>
 
-    <!-- Quiz -->
+    <!-- Quiz View -->
     <section id="viewQuiz" class="card" style="display:none;">
       <div class="quizHeader">
         <div>
@@ -85,79 +99,81 @@
         </div>
       </div>
 
-      <div id="qText" class="qText">ここに問題文</div>
+      <div id="qText" class="qText"></div>
 
       <div id="choices" class="choices"></div>
 
       <div class="quizFooter">
-        <button id="btnPrev" class="btn ghost" type="button">前へ</button>
+        <button id="btnPrev" class="btn" type="button">前へ</button>
+        <button id="btnNext" class="btn" type="button">次へ</button>
         <div class="spacer"></div>
-        <button id="btnNext" class="btn primary" type="button">次へ</button>
+        <div class="muted small">※ 採点後は選択できません</div>
       </div>
 
       <div class="progressWrap">
-        <div class="progressBar">
-          <div id="progressFill" class="progressFill" style="width:0%"></div>
-        </div>
+        <div class="progressBar"><div id="progressFill" class="progressFill" style="width:4%;"></div></div>
       </div>
     </section>
 
-    <!-- Result -->
+    <!-- Result View -->
     <section id="viewResult" class="card" style="display:none;">
       <h2>結果</h2>
 
-      <div id="resultSummary" class="resultSummary"></div>
+      <div id="resultSummary" class="resultSummary" style="margin-top:10px;"></div>
 
-      <div class="grid2">
+      <div class="grid2" style="margin-top:14px;">
         <div class="panel">
-          <div class="panelTitle">分析（自動）</div>
-          <pre id="analysisText" class="analysis"></pre>
-        </div>
-
-        <div class="panel">
-          <div class="panelTitle">教科別（レーダー）</div>
+          <div class="panelTitle">レーダー（教科別正答率）</div>
           <canvas id="radarCanvas" class="canvas"></canvas>
+        </div>
+        <div class="panel">
+          <div class="panelTitle">分析</div>
+          <pre id="analysisText" class="analysis"></pre>
         </div>
       </div>
 
-      <div id="breakdown"></div>
+      <div id="breakdown" style="margin-top:14px;"></div>
 
-      <div class="panel">
-        <div class="panelTitle">解説（問題番号を押す）</div>
+      <div class="panel" style="margin-top:14px;">
+        <div class="panelTitle">解説（番号を押すと表示）</div>
         <div id="explainList" class="miniBtns"></div>
         <div id="explainBox" class="explainBox" style="display:none;"></div>
       </div>
 
-      <div class="panel">
-        <div class="row">
-          <div class="panelTitle">履歴（この端末）</div>
+      <div class="panel" style="margin-top:14px;">
+        <div class="row wrap">
+          <div class="panelTitle" style="margin:0;">履歴</div>
           <div class="spacer"></div>
-          <button id="btnToggleHistory" class="btn ghost" type="button">履歴を表示</button>
-          <button id="btnClearHistory" class="btn ghost danger" type="button">履歴を全削除</button>
+          <button id="btnToggleHistory" class="btn ghost" type="button">開閉</button>
+          <button id="btnClearHistory" class="btn danger" type="button">履歴全削除</button>
         </div>
 
-        <div id="historyPanel" style="display:none;">
+        <div id="historyPanel" style="display:none; margin-top:12px;">
           <div id="historyStats" class="historyStats"></div>
-          <div class="panelTitle">最近10回の推移</div>
-          <canvas id="historyCanvas" class="canvas"></canvas>
-          <div class="panelTitle">直近一覧（最大10件）</div>
-          <div id="historyList" class="historyList"></div>
+          <canvas id="historyCanvas" class="canvas" style="height:220px;"></canvas>
+          <div id="historyList" class="historyList" style="margin-top:12px;"></div>
         </div>
-      </div>
-
-      <div class="muted small">
-        ※オフライン対応（Service Worker）。反映されない場合は強制リロード（Ctrl+Shift+R）またはサイトデータ削除、必要なら sw.js の CACHE_NAME を v+1 してください。
       </div>
     </section>
+
   </main>
 
+  <!-- Scripts -->
   <script src="bank.js"></script>
   <script src="app.js"></script>
+
+  <!-- Service Worker -->
   <script>
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("./sw.js").catch(() => {});
-    }
+    (function () {
+      if (!("serviceWorker" in navigator)) return;
+      window.addEventListener("load", async () => {
+        try {
+          await navigator.serviceWorker.register("./sw.js");
+        } catch (e) {
+          console.warn("[SW] register failed:", e);
+        }
+      });
+    })();
   </script>
 </body>
 </html>
-
