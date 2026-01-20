@@ -315,3 +315,26 @@ h2{margin:0 0 10px 0}
 }
 .hL{width:32px;height:32px;border-radius:12px;display:grid;place-items:center;background:#fbf8f1;border:1px solid var(--border);font-weight:1000}
 .hTop{font-weight:900}
+
+/* 問題内テーブル */
+.qTableWrap { overflow-x: auto; }
+.qTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.qTable caption {
+  text-align: left;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.qTable th, .qTable td {
+  border: 1px solid rgba(0,0,0,0.12);
+  padding: 8px 10px;
+  vertical-align: top;
+}
+.qTable th {
+  background: rgba(0,0,0,0.04);
+  font-weight: 600;
+}
+.exTable { margin-top: 10px; }
