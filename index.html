@@ -37,7 +37,7 @@
     <!-- Unlock -->
     <section id="unlockCard" class="card" style="display:none;">
       <h2>ロック解除</h2>
-      <div class="muted small">合言葉を入力するとクイズを開始できます（履歴の閲覧は常に可能）。</div>
+      <div class="muted small">合言葉を入力するとクイズを開始できます。</div>
       <div class="row wrap" style="margin-top:12px;">
         <input id="passInput" class="input" type="password" inputmode="numeric" placeholder="合言葉" />
         <button id="btnUnlock" class="btn primary" type="button">解除</button>
@@ -59,29 +59,6 @@
           <label class="chk"><input id="chkDiffB" type="checkbox" checked /> 基礎</label>
           <label class="chk"><input id="chkDiffN" type="checkbox" checked /> 標準</label>
           <label class="chk"><input id="chkDiffA" type="checkbox" checked /> 発展</label>
-        </div>
-      </div>
-
-      <div class="grid2" style="margin-top:12px;">
-        <div class="panel">
-          <div class="panelTitle">偏り抑制</div>
-          <label class="chk">
-            <input id="chkAvoidSimilar" type="checkbox" checked />
-            似たパターン（patternGroup）連発を避ける
-          </label>
-          <label class="chk">
-            <input id="chkNoDup" type="checkbox" checked />
-            25問内の重複（uid）を禁止
-          </label>
-          <div class="muted small">※ bank.js 側で uid / patternGroup が不足していても app.js 側で補完する設計です。</div>
-        </div>
-
-        <div class="panel">
-          <div class="panelTitle">メモ</div>
-          <div class="muted small">
-            「新しいクイズ」を押すたびに抽選し直します。<br/>
-            不自然な偏りが出る場合は、問題バンクのテンプレ数不足（patternGroupの種類が少ない）か、抽選制約の競合が原因になりやすいです。
-          </div>
         </div>
       </div>
     </section>
@@ -177,3 +154,4 @@
   </script>
 </body>
 </html>
+
