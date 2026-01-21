@@ -251,7 +251,7 @@
     { sub:"理科", level:"中", diff:"基礎", pattern:"physics", patternGroup:"sci_refraction", q:"水に入れたストローが曲がって見える現象は？", c:["屈折","反射","干渉","回折"], a:0, exp:"光の屈折。" },
     { sub:"理科", level:"中", diff:"基礎", pattern:"chemistry", patternGroup:"sci_chemical_change", q:"鉄がさびる変化は？", c:["酸化","還元","中和","蒸発"], a:0, exp:"鉄の酸化。" },
     { sub:"理科", level:"中", diff:"標準", pattern:"physics", patternGroup:"sci_ohm_law", q:"電流0.5A、抵抗4Ωのとき電圧は？", c:["2V","8V","0.125V","4V"], a:0, exp:"V=IR=2。" },
-    { sub:"理科", level:"中", diff:"標準", pattern:"physics", patternGroup:"sci_work", q:"仕事=力×距離。力10Nで3m動かす仕事は？", c:["30J","13J","300J","3J"], a:0, exp:"10×3=30。" },
+    { sub:"理科", level:"中", diff:"標準", pattern:"physics", patternGroup:"sci_work", q:"力10Nで3m動かす仕事は？", c:["30J","13J","300J","3J"], a:0, exp:"10×3=30。" },
     { sub:"理科", level:"中", diff:"標準", pattern:"chemistry", patternGroup:"sci_ion_basic", q:"塩化水素が水に溶けるとできるイオンは？", c:["H⁺とCl⁻","Na⁺とCl⁻","H⁺とOH⁻","Na⁺とOH⁻"], a:0, exp:"HCl→H⁺,Cl⁻。" },
     { sub:"理科", level:"中", diff:"標準", pattern:"chemistry", patternGroup:"sci_gas_basic", q:"酸素が発生する反応として正しいものは？", c:["過酸化水素の分解","水の凝結","塩化ナトリウムの溶解","砂糖の融解"], a:0, exp:"H2O2分解。" },
     { sub:"理科", level:"中", diff:"標準", pattern:"biology", patternGroup:"sci_photosynthesis", q:"光合成で必要な気体は？", c:["二酸化炭素","酸素","窒素","水素"], a:0, exp:"CO2が必要。" },
