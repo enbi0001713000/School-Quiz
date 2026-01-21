@@ -250,6 +250,9 @@ h2{margin:0 0 10px 0}
   color:var(--text);
   text-align:left;
 }
+.choice *{
+  color:inherit;
+}
 .choice:hover{filter:brightness(0.99)}
 .choice.selected{
   outline:3px solid rgba(31,95,184,0.22);
