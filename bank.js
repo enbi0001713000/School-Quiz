@@ -48,6 +48,17 @@
     return true;
   }
 
+  function shuffleChoices(choices, correctIndex) {
+    const items = choices.map((text, index) => ({ text, index }));
+    for (let i = items.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+    const shuffledChoices = items.map(item => item.text);
+    const shuffledAnswerIndex = items.findIndex(item => item.index === correctIndex);
+    return { shuffledChoices, shuffledAnswerIndex };
+  }
+
   const DATA = [
     /* ========= 国語 50 ========= */
     { sub:"国語", level:"小", diff:"基礎", pattern:"kanji", patternGroup:"ja_kanji_read_basic", q:"次の漢字の読みは？「森」", c:["もり","しん","はやし","たけ"], a:0, exp:"森=もり。" },
@@ -313,6 +324,9 @@
   const BANK = DATA.map((q, i) => {
     const qq = Object.assign({}, q);
     if (!qq.patternGroup) qq.patternGroup = qq.pattern || "p";
+    const { shuffledChoices, shuffledAnswerIndex } = shuffleChoices(qq.c, qq.a);
+    qq.c = shuffledChoices;
+    qq.a = shuffledAnswerIndex;
     qq.uid = makeUid(qq);
     qq.key = toKey(qq, i);
     return qq;
