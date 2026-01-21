@@ -148,6 +148,10 @@ h2{margin:0 0 10px 0}
   cursor:pointer;
   font-weight:700;
   color:var(--action-text);
+  background:var(--surface-muted);
+  cursor:pointer;
+  font-weight:700;
+  color:var(--text);
 }
 .btn:hover{filter:brightness(0.98)}
 .btn:active{transform:translateY(1px)}
