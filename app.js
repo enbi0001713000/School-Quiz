@@ -409,11 +409,33 @@
     return a;
   }
 
-  function scoreCandidate(q, usedUids, patternGroupCount, opts) {
+  function normalizeText(s) {
+    return String(s ?? "")
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function questionSignature(q) {
+    const sub = normalizeText(q?.sub);
+    const qt = normalizeText(q?.q);
+    const choices = Array.isArray(q?.c)
+      ? q.c.map(normalizeText).sort().join("||")
+      : "";
+    const aText = Array.isArray(q?.c) && Number.isFinite(q?.a)
+      ? normalizeText(q.c[q.a])
+      : "";
+    return `${sub}::${qt}::${choices}::a=${aText}`;
+  }
+
+  function scoreCandidate(q, usedUids, usedSignatures, patternGroupCount, opts) {
     let s = 0;
 
     // noDup：内容ベース（uid）重複を禁止
-    if (opts.noDup && usedUids.has(q.uid)) s += 1e9;
+    if (opts.noDup && (usedUids.has(q.uid) || usedSignatures.has(questionSignature(q)))) {
+      s += 1e9;
+    }
 
     // avoidSimilar：patternGroup で偏りを抑える
     if (opts.avoidSimilar) {
@@ -425,7 +447,7 @@
     return s;
   }
 
-  function choose5ForSubject(subject, grades, diffs, opts, usedUids, patternGroupCount) {
+  function choose5ForSubject(subject, grades, diffs, opts, usedUids, usedSignatures, patternGroupCount) {
     // 基本候補
     let cands = BANK.filter(q =>
       q && q.sub === subject &&
@@ -469,19 +491,21 @@
 
       let best = null, bestScore = Infinity;
       for (const q of candidates) {
-        const s = scoreCandidate(q, usedUids, patternGroupCount, opts);
+        const s = scoreCandidate(q, usedUids, usedSignatures, patternGroupCount, opts);
         if (s < bestScore) { bestScore = s; best = q; }
       }
 
       chosen.push(best);
       usedUids.add(best.uid);
+      const signature = questionSignature(best);
+      usedSignatures.add(signature);
 
       const g = best.patternGroup || best.pattern || "p";
       patternGroupCount.set(g, (patternGroupCount.get(g) || 0) + 1);
 
       // 1) 同一オブジェクト再抽選防止（key）
       // 2) noDup 有効なら内容ベースでも排除（uid）
-      pool = pool.filter(q => q.key !== best.key && (!opts.noDup || q.uid !== best.uid));
+      pool = pool.filter(q => q.key !== best.key && (!opts.noDup || (q.uid !== best.uid && questionSignature(q) !== signature)));
     }
 
     return chosen;
@@ -493,11 +517,12 @@
     const opts = getOptions();
 
     const usedUids = new Set();
+    const usedSignatures = new Set();
     const patternGroupCount = new Map();
     const quiz = [];
 
     for (const sub of SUBJECTS) {
-      quiz.push(...choose5ForSubject(sub, grades, diffs, opts, usedUids, patternGroupCount));
+      quiz.push(...choose5ForSubject(sub, grades, diffs, opts, usedUids, usedSignatures, patternGroupCount));
     }
     shuffle(quiz);
 
