@@ -7,6 +7,7 @@
   const PASSPHRASE = String.fromCharCode(48, 50, 49, 55); // "0217"（表示しない）
   const LS_UNLOCK = "quiz_unlock_v2";
   const LS_HISTORY = "quiz_history_v2";
+  const LS_THEME = "quiz_theme_v1";
   const HISTORY_MAX = 50;
 
   const SUBJECTS = ["国語", "数学", "英語", "理科", "社会"];
@@ -53,6 +54,20 @@
   const fmtPct = (x) => `${Math.round(clamp01(x) * 100)}%`;
   const fmtSec = (ms) => `${Math.round((ms || 0) / 1000)}秒`;
   const fmtSec1 = (ms) => `${(ms / 1000).toFixed(1)}s`;
+  const getCssVar = (name, fallback) => {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+  };
+  const getChartTheme = () => ({
+    grid: getCssVar("--chart-grid", "rgba(0,0,0,0.12)"),
+    axis: getCssVar("--chart-axis", "rgba(0,0,0,0.12)"),
+    text: getCssVar("--chart-text", "rgba(0,0,0,0.72)"),
+    guide: getCssVar("--chart-guide", "rgba(0,0,0,0.08)"),
+    fill: getCssVar("--chart-accent-fill", "rgba(20,60,160,0.18)"),
+    stroke: getCssVar("--chart-accent-stroke", "rgba(20,60,160,0.55)"),
+    line: getCssVar("--chart-line", "rgba(20,60,160,0.65)"),
+    point: getCssVar("--chart-point", "rgba(20,60,160,0.75)"),
+  });
 
   const el = {
     unlockCard: () => $("unlockCard"),
@@ -71,6 +86,7 @@
     chkNoDup: () => $("chkNoDup"),
 
     btnHistoryTop: () => $("btnHistoryTop"),
+    btnTheme: () => $("btnTheme"),
     btnNew: () => $("btnNew"),
     btnReset: () => $("btnReset"),
     btnGrade: () => $("btnGrade"),
@@ -311,6 +327,7 @@
     timer: null,
     graded: false,
     explainActive: null, // 解説番号のactive表示用
+    lastResult: null,
   };
 
   /* =========================
@@ -788,6 +805,7 @@
   }
 
   function renderResult(res) {
+    state.lastResult = res;
     if (el.resultSummary()) {
       el.resultSummary().innerHTML = `
         <div class="scoreBig">${res.correct} / ${TOTAL_Q}（${fmtPct(res.acc)}）</div>
@@ -999,6 +1017,7 @@
     const ctx = canvas.getContext("2d");
     const w = canvas.width = canvas.clientWidth || 360;
     const h = canvas.height = canvas.clientHeight || 260;
+    const chart = getChartTheme();
 
     ctx.clearRect(0, 0, w, h);
 
@@ -1006,7 +1025,7 @@
     const cy = h / 2 + 10;
     const R = Math.min(w, h) * 0.33;
 
-    ctx.strokeStyle = "rgba(0,0,0,0.12)";
+    ctx.strokeStyle = chart.grid;
     for (let k = 1; k <= 5; k++) {
       const r = (R * k) / 5;
       ctx.beginPath();
@@ -1021,7 +1040,7 @@
       ctx.stroke();
     }
 
-    ctx.fillStyle = "rgba(0,0,0,0.72)";
+    ctx.fillStyle = chart.text;
     ctx.font = "12px sans-serif";
     SUBJECTS.forEach((label, i) => {
       const ang = (-Math.PI / 2) + (i * 2 * Math.PI) / 5;
@@ -1030,7 +1049,7 @@
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       ctx.lineTo(cx + R * Math.cos(ang), cy + R * Math.sin(ang));
-      ctx.strokeStyle = "rgba(0,0,0,0.12)";
+      ctx.strokeStyle = chart.axis;
       ctx.stroke();
       ctx.fillText(label, x - 10, y + 4);
     });
@@ -1045,8 +1064,8 @@
       else ctx.lineTo(x, y);
     });
     ctx.closePath();
-    ctx.fillStyle = "rgba(20,60,160,0.18)";
-    ctx.strokeStyle = "rgba(20,60,160,0.55)";
+    ctx.fillStyle = chart.fill;
+    ctx.strokeStyle = chart.stroke;
     ctx.lineWidth = 2;
     ctx.fill();
     ctx.stroke();
@@ -1060,11 +1079,12 @@
     const ctx = canvas.getContext("2d");
     const w = canvas.width = canvas.clientWidth || 520;
     const h = canvas.height = canvas.clientHeight || 220;
+    const chart = getChartTheme();
     ctx.clearRect(0, 0, w, h);
 
     const data = hist.slice(0, 10).reverse();
     if (!data.length) {
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillStyle = chart.text;
       ctx.font = "12px sans-serif";
       ctx.fillText("履歴がまだありません。", 12, 24);
       return;
@@ -1074,18 +1094,18 @@
     const plotW = w - padL - padR;
     const plotH = h - padT - padB;
 
-    ctx.strokeStyle = "rgba(0,0,0,0.12)";
+    ctx.strokeStyle = chart.grid;
     ctx.beginPath();
     ctx.moveTo(padL, padT);
     ctx.lineTo(padL, padT + plotH);
     ctx.lineTo(padL + plotW, padT + plotH);
     ctx.stroke();
 
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillStyle = chart.text;
     ctx.font = "11px sans-serif";
     [0, 0.5, 1].forEach((p) => {
       const y = padT + plotH * (1 - p);
-      ctx.strokeStyle = "rgba(0,0,0,0.08)";
+      ctx.strokeStyle = chart.guide;
       ctx.beginPath();
       ctx.moveTo(padL, y);
       ctx.lineTo(padL + plotW, y);
@@ -1096,7 +1116,7 @@
     const xs = data.map((_, i) => padL + (plotW * i) / (data.length - 1 || 1));
     const ys = data.map((d) => padT + plotH * (1 - clamp01(d.acc)));
 
-    ctx.strokeStyle = "rgba(20,60,160,0.65)";
+    ctx.strokeStyle = chart.line;
     ctx.lineWidth = 2;
     ctx.beginPath();
     xs.forEach((x, i) => {
@@ -1106,14 +1126,14 @@
     });
     ctx.stroke();
 
-    ctx.fillStyle = "rgba(20,60,160,0.75)";
+    ctx.fillStyle = chart.point;
     xs.forEach((x, i) => {
       ctx.beginPath();
       ctx.arc(x, ys[i], 3, 0, Math.PI * 2);
       ctx.fill();
     });
 
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillStyle = chart.text;
     ctx.font = "11px sans-serif";
     data.forEach((_, i) => {
       if (data.length > 6 && i % 2 === 1) return;
@@ -1125,10 +1145,50 @@
   /* =========================
    * イベント
    * ========================= */
+  function applyTheme(theme) {
+    const next = theme === "dark" ? "dark" : "light";
+    if (next === "dark") {
+      document.documentElement.setAttribute("data-theme", "dark");
+      document.body.setAttribute("data-theme", "dark");
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+      document.body.removeAttribute("data-theme");
+    }
+    if (el.btnTheme()) {
+      el.btnTheme().textContent = next === "dark" ? "ライトモード" : "ダークモード";
+    }
+    try { localStorage.setItem(LS_THEME, next); } catch {}
+    if (state.lastResult) {
+      renderResult(state.lastResult);
+    } else {
+      renderHistory();
+    }
+  }
+
+  function initTheme() {
+    const saved = localStorage.getItem(LS_THEME);
+    if (saved === "dark" || saved === "light") {
+      applyTheme(saved);
+      return;
+    }
+    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    applyTheme(prefersDark ? "dark" : "light");
+  }
+
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute("data-theme") === "dark"
+      || document.body.getAttribute("data-theme") === "dark"
+      ? "dark"
+      : "light";
+    applyTheme(current === "dark" ? "light" : "dark");
+  }
+
   function bind() {
+    initTheme();
     el.btnUnlock()?.addEventListener("click", onUnlock);
     el.passInput()?.addEventListener("keydown", (e) => { if (e.key === "Enter") onUnlock(); });
 
+    el.btnTheme()?.addEventListener("click", toggleTheme);
     el.btnHistoryTop()?.addEventListener("click", openHistoryFromTop);
 
     el.btnNew()?.addEventListener("click", newQuiz);

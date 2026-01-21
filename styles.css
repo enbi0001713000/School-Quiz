@@ -1,6 +1,9 @@
 :root{
   --bg:#fbf7ef;
   --card:#ffffff;
+  --surface:#ffffff;
+  --surface-muted:#f2efe7;
+  --surface-alt:#fbf8f1;
   --text:#0c1b2a;
   --muted:#5c6775;
   --border:rgba(0,0,0,0.10);
@@ -9,6 +12,22 @@
   --danger:#b42318;
   --shadow:0 10px 26px rgba(0,0,0,0.06);
   --radius:18px;
+  --topbar-bg:rgba(251,247,239,0.85);
+  --progress-bg:#f1ede3;
+  --ghost-bg:#ffffff;
+  --table-border:rgba(0,0,0,0.12);
+  --table-head:rgba(0,0,0,0.04);
+  --mini-na-bg:rgba(0,0,0,0.06);
+  --mini-na-border:rgba(0,0,0,0.18);
+  --mini-na-text:rgba(0,0,0,0.55);
+  --chart-grid:rgba(0,0,0,0.12);
+  --chart-axis:rgba(0,0,0,0.12);
+  --chart-text:rgba(0,0,0,0.72);
+  --chart-guide:rgba(0,0,0,0.08);
+  --chart-accent-fill:rgba(20,60,160,0.18);
+  --chart-accent-stroke:rgba(20,60,160,0.55);
+  --chart-line:rgba(20,60,160,0.65);
+  --chart-point:rgba(20,60,160,0.75);
 }
 
 *{box-sizing:border-box}
@@ -20,11 +39,43 @@ body{
   color:var(--text);
 }
 
+:root[data-theme="dark"],
+body[data-theme="dark"]{
+  --bg:#0a1330;
+  --card:#0f1b3f;
+  --surface:#101f46;
+  --surface-muted:#172a5d;
+  --surface-alt:#1c2f66;
+  --text:#f5f7ff;
+  --muted:#b3c2e6;
+  --border:rgba(255,255,255,0.16);
+  --primary:#4f7dff;
+  --primary2:#7aa2ff;
+  --danger:#ff7070;
+  --shadow:0 12px 28px rgba(0,0,0,0.45);
+  --topbar-bg:rgba(11,19,48,0.85);
+  --progress-bg:#132351;
+  --ghost-bg:#101f46;
+  --table-border:rgba(255,255,255,0.2);
+  --table-head:rgba(255,255,255,0.08);
+  --mini-na-bg:rgba(255,255,255,0.08);
+  --mini-na-border:rgba(255,255,255,0.18);
+  --mini-na-text:rgba(255,255,255,0.7);
+  --chart-grid:rgba(255,255,255,0.2);
+  --chart-axis:rgba(255,255,255,0.2);
+  --chart-text:rgba(245,247,255,0.9);
+  --chart-guide:rgba(255,255,255,0.12);
+  --chart-accent-fill:rgba(110,151,255,0.25);
+  --chart-accent-stroke:rgba(110,151,255,0.8);
+  --chart-line:rgba(110,151,255,0.85);
+  --chart-point:rgba(110,151,255,0.9);
+}
+
 .topbar{
   position:sticky;
   top:0;
   z-index:10;
-  background:rgba(251,247,239,0.85);
+  background:var(--topbar-bg);
   backdrop-filter: blur(10px);
   border-bottom:1px solid var(--border);
   padding:14px 18px;
@@ -76,7 +127,7 @@ h2{margin:0 0 10px 0}
   padding:12px 14px;
   border-radius:14px;
   border:1px solid var(--border);
-  background:#fff;
+  background:var(--surface);
   font-size:16px;
 }
 
@@ -84,9 +135,10 @@ h2{margin:0 0 10px 0}
   padding:12px 14px;
   border-radius:14px;
   border:1px solid var(--border);
-  background:#f2efe7;
+  background:var(--surface-muted);
   cursor:pointer;
   font-weight:700;
+  color:var(--text);
 }
 .btn:hover{filter:brightness(0.98)}
 .btn:active{transform:translateY(1px)}
@@ -96,7 +148,7 @@ h2{margin:0 0 10px 0}
   color:#fff;
 }
 .btn.ghost{
-  background:#fff;
+  background:var(--ghost-bg);
 }
 .btn.danger{
   color:var(--danger);
@@ -120,7 +172,7 @@ h2{margin:0 0 10px 0}
   border:1px solid var(--border);
   border-radius:16px;
   padding:14px;
-  background:#fff;
+  background:var(--surface);
 }
 .panelTitle{
   font-weight:800;
@@ -144,7 +196,7 @@ h2{margin:0 0 10px 0}
   border-radius:999px;
   font-weight:700;
   font-size:13px;
-  background:#fff;
+  background:var(--surface);
 }
 .elapsedBox{text-align:right}
 .elapsed{font-size:26px;font-weight:900}
@@ -174,7 +226,7 @@ h2{margin:0 0 10px 0}
   border:1px solid var(--border);
   border-radius:16px;
   padding:14px;
-  background:#fff;
+  background:var(--surface);
   cursor:pointer;
   font-weight:800;
   text-align:left;
@@ -188,7 +240,7 @@ h2{margin:0 0 10px 0}
   width:34px;height:34px;border-radius:12px;
   display:grid;place-items:center;
   border:1px solid var(--border);
-  background:#fbf8f1;
+  background:var(--surface-alt);
   font-weight:900;
 }
 
@@ -203,7 +255,7 @@ h2{margin:0 0 10px 0}
 .progressBar{
   height:14px;
   border-radius:999px;
-  background:#f1ede3;
+  background:var(--progress-bg);
   border:1px solid var(--border);
   overflow:hidden;
 }
@@ -229,7 +281,7 @@ h2{margin:0 0 10px 0}
   height:260px;
   border:1px solid var(--border);
   border-radius:14px;
-  background:#fff;
+  background:var(--surface);
 }
 
 .gridMini{
@@ -245,14 +297,14 @@ h2{margin:0 0 10px 0}
   border:1px solid var(--border);
   border-radius:14px;
   padding:12px;
-  background:#fff;
+  background:var(--surface);
 }
 .cardMini .k{font-weight:900}
 .cardMini .v{font-weight:900;margin-top:4px}
 .miniBtns{display:flex;gap:8px;flex-wrap:wrap}
 .mini{
   border:1px solid var(--border);
-  background:#fff;
+  background:var(--surface);
   border-radius:12px;
   padding:8px 10px;
   font-weight:900;
@@ -271,9 +323,9 @@ h2{margin:0 0 10px 0}
   color: var(--danger);
 }
 .mini.na{
-  border-color: rgba(0,0,0,0.18);
-  background: rgba(0,0,0,0.06);
-  color: rgba(0,0,0,0.55);
+  border-color: var(--mini-na-border);
+  background: var(--mini-na-bg);
+  color: var(--mini-na-text);
 }
 
 /* ★追加：表示中（active） */
@@ -287,7 +339,7 @@ h2{margin:0 0 10px 0}
   border:1px solid var(--border);
   border-radius:14px;
   padding:12px;
-  background:#fff;
+  background:var(--surface);
 }
 .exTitle{font-weight:1000;margin-bottom:8px}
 .exQ{font-weight:800;margin-bottom:10px}
@@ -298,7 +350,7 @@ h2{margin:0 0 10px 0}
   border-radius:999px;
   border:1px solid var(--border);
   font-weight:900;
-  background:#fff;
+  background:var(--surface);
 }
 .tag.ok{border-color:rgba(16,185,129,0.25); color:#047857}
 .tag.ng{border-color:rgba(180,35,24,0.25); color:var(--danger)}
@@ -313,7 +365,7 @@ h2{margin:0 0 10px 0}
   gap:10px;
   align-items:center;
 }
-.hL{width:32px;height:32px;border-radius:12px;display:grid;place-items:center;background:#fbf8f1;border:1px solid var(--border);font-weight:1000}
+.hL{width:32px;height:32px;border-radius:12px;display:grid;place-items:center;background:var(--surface-alt);border:1px solid var(--border);font-weight:1000}
 .hTop{font-weight:900}
 
 /* 問題内テーブル */
@@ -329,12 +381,12 @@ h2{margin:0 0 10px 0}
   margin-bottom: 6px;
 }
 .qTable th, .qTable td {
-  border: 1px solid rgba(0,0,0,0.12);
+  border: 1px solid var(--table-border);
   padding: 8px 10px;
   vertical-align: top;
 }
 .qTable th {
-  background: rgba(0,0,0,0.04);
+  background: var(--table-head);
   font-weight: 600;
 }
 .exTable { margin-top: 10px; }
