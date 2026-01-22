@@ -99,6 +99,12 @@
     chkDiffB: () => $("chkDiffB"),
     chkDiffN: () => $("chkDiffN"),
     chkDiffA: () => $("chkDiffA"),
+    chkSubJa: () => $("chkSubJa"),
+    chkSubMath: () => $("chkSubMath"),
+    chkSubEn: () => $("chkSubEn"),
+    chkSubSci: () => $("chkSubSci"),
+    chkSubSoc: () => $("chkSubSoc"),
+    btnApplyFilter: () => $("btnApplyFilter"),
 
     // （UI上は非表示にする想定。存在しなくても落ちない）
     chkAvoidSimilar: () => $("chkAvoidSimilar"),
@@ -395,6 +401,7 @@
     if (el.btnNew()) el.btnNew().disabled = !enabled;
     if (el.btnReset()) el.btnReset().disabled = !enabled;
     if (el.btnGrade()) el.btnGrade().disabled = !enabled;
+    if (el.btnApplyFilter()) el.btnApplyFilter().disabled = !enabled;
   }
 
   function updateLockUI() {
@@ -446,6 +453,15 @@
     if (el.chkDiffN()?.checked) res.push("標準");
     if (el.chkDiffA()?.checked) res.push("発展");
     return res.length ? res : ["基礎", "標準", "発展"];
+  }
+  function getSelectedSubjects() {
+    const res = [];
+    if (el.chkSubJa()?.checked) res.push("国語");
+    if (el.chkSubMath()?.checked) res.push("数学");
+    if (el.chkSubEn()?.checked) res.push("英語");
+    if (el.chkSubSci()?.checked) res.push("理科");
+    if (el.chkSubSoc()?.checked) res.push("社会");
+    return res.length ? res : SUBJECTS.slice();
   }
 
   // ★重要：ユーザーUIに依存せず、常時ON（非表示化しても挙動が変わらない）
@@ -567,6 +583,7 @@
   }
 
   function buildQuiz() {
+    const subjects = getSelectedSubjects();
     const grades = getSelectedGrades();
     const diffs = getSelectedDiffs();
     const opts = getOptions();
@@ -576,13 +593,13 @@
     const patternGroupCount = new Map();
     const quiz = [];
 
-    for (const sub of SUBJECTS) {
+    for (const sub of subjects) {
       quiz.push(...choose5ForSubject(sub, grades, diffs, opts, usedUids, usedSignatures, patternGroupCount));
     }
     shuffle(quiz);
 
-    if (quiz.length !== TOTAL_Q) {
-      throw new Error(`出題生成に失敗（${quiz.length}/${TOTAL_Q}）`);
+    if (!quiz.length) {
+      throw new Error("出題に失敗しました（条件を見直してください）。");
     }
     return quiz;
   }
@@ -1371,7 +1388,7 @@
     el.btnReset()?.addEventListener("click", resetAnswers);
     el.btnGrade()?.addEventListener("click", gradeQuiz);
     el.btnReview()?.addEventListener("click", startReviewMode);
-
+    el.btnApplyFilter()?.addEventListener("click", newQuiz);
     el.btnPrev()?.addEventListener("click", goPrev);
     el.btnNext()?.addEventListener("click", goNext);
 
