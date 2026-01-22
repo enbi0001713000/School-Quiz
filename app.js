@@ -1389,7 +1389,6 @@
     el.btnGrade()?.addEventListener("click", gradeQuiz);
     el.btnReview()?.addEventListener("click", startReviewMode);
     el.btnApplyFilter()?.addEventListener("click", newQuiz);
-
     el.btnPrev()?.addEventListener("click", goPrev);
     el.btnNext()?.addEventListener("click", goNext);
 
