@@ -15,7 +15,7 @@
   const QUIZ_PER_SUBJECT = 5;
   const TOTAL_Q = SUBJECTS.length * QUIZ_PER_SUBJECT;
 
-  const DIFF_TARGET = { "基礎": 0.2, "標準": 0.5, "発展": 0.3 };
+  const DIFF_TARGET = { "基礎": 0.3, "標準": 0.4, "発展": 0.3 };
   const DIFFS = ["基礎", "標準", "発展"];
 
   // pattern は内部コードのまま保持し、表示だけ日本語にする
