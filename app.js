@@ -7,6 +7,7 @@
   const PASSPHRASE = String.fromCharCode(48, 50, 49, 55); // "0217"（表示しない）
   const LS_UNLOCK = "quiz_unlock_v2";
   const LS_HISTORY = "quiz_history_v2";
+  const LS_NAME = "quiz_user_name_v1";
   const LS_THEME = "quiz_theme_v1";
   const HISTORY_MAX = 50;
 
@@ -72,6 +73,7 @@
   const el = {
     unlockCard: () => $("unlockCard"),
     passInput: () => $("passInput"),
+    nameInput: () => $("nameInput"),
     btnUnlock: () => $("btnUnlock"),
 
     filterCard: () => $("filterCard"),
@@ -93,6 +95,7 @@
 
     viewQuiz: () => $("viewQuiz"),
     viewResult: () => $("viewResult"),
+    resultTitle: () => $("resultTitle"),
 
     qNo: () => $("qNo"),
     qChips: () => $("qChips"),
@@ -335,6 +338,8 @@
    * ========================= */
   const isUnlocked = () => localStorage.getItem(LS_UNLOCK) === "1";
   const setUnlocked = () => localStorage.setItem(LS_UNLOCK, "1");
+  const getUserName = () => localStorage.getItem(LS_NAME) || "";
+  const setUserName = (name) => localStorage.setItem(LS_NAME, name);
 
   function loadHistory() {
     try {
@@ -385,6 +390,14 @@
   function onUnlock() {
     const pass = (el.passInput()?.value || "").trim();
     if (pass === PASSPHRASE) {
+      const nameValue = (el.nameInput()?.value || "").trim();
+      const storedName = getUserName();
+      if (nameValue) {
+        setUserName(nameValue);
+      } else if (!storedName) {
+        alert("名前を入力してください。");
+        return;
+      }
       setUnlocked();
       updateLockUI();
       if (!state.quiz.length) newQuiz();
@@ -806,6 +819,10 @@
 
   function renderResult(res) {
     state.lastResult = res;
+    if (el.resultTitle()) {
+      const name = getUserName();
+      el.resultTitle().textContent = name ? `${name}さんの結果` : "結果";
+    }
     if (el.resultSummary()) {
       el.resultSummary().innerHTML = `
         <div class="scoreBig">${res.correct} / ${TOTAL_Q}（${fmtPct(res.acc)}）</div>
@@ -1182,6 +1199,7 @@
     initTheme();
     el.btnUnlock()?.addEventListener("click", onUnlock);
     el.passInput()?.addEventListener("keydown", (e) => { if (e.key === "Enter") onUnlock(); });
+    el.nameInput()?.addEventListener("keydown", (e) => { if (e.key === "Enter") onUnlock(); });
 
     el.btnTheme()?.addEventListener("click", toggleTheme);
     el.btnHistoryTop()?.addEventListener("click", openHistoryFromTop);
