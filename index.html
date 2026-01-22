@@ -46,6 +46,41 @@
       </div>
     </section>
 
+    <!-- Filter -->
+    <section id="filterCard" class="card" style="display:none;">
+      <h2>出題設定</h2>
+      <div class="muted small">教科・学年・難易度を選んで出題できます。</div>
+
+      <div class="panel" style="margin-top:12px;">
+        <div class="panelTitle">教科</div>
+        <div class="row wrap">
+          <label class="chk"><input id="chkSubJa" type="checkbox" checked />国語</label>
+          <label class="chk"><input id="chkSubMath" type="checkbox" checked />数学</label>
+          <label class="chk"><input id="chkSubEn" type="checkbox" checked />英語</label>
+          <label class="chk"><input id="chkSubSci" type="checkbox" checked />理科</label>
+          <label class="chk"><input id="chkSubSoc" type="checkbox" checked />社会</label>
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:12px;">
+        <div class="panel">
+          <div class="panelTitle">学年</div>
+          <label class="chk"><input id="chkGradeE" type="checkbox" checked />小</label>
+          <label class="chk"><input id="chkGradeJ" type="checkbox" checked />中</label>
+        </div>
+        <div class="panel">
+          <div class="panelTitle">難易度</div>
+          <label class="chk"><input id="chkDiffB" type="checkbox" checked />基礎</label>
+          <label class="chk"><input id="chkDiffN" type="checkbox" checked />標準</label>
+          <label class="chk"><input id="chkDiffA" type="checkbox" checked />発展</label>
+        </div>
+      </div>
+
+      <div class="row wrap" style="margin-top:12px;">
+        <button id="btnApplyFilter" class="btn primary" type="button">設定を適用して新しいクイズ</button>
+      </div>
+    </section>
+
     <!-- Quiz View -->
     <section id="viewQuiz" class="card" style="display:none;">
       <div class="quizHeader">
@@ -79,6 +114,9 @@
       <h2 id="resultTitle">結果</h2>
 
       <div id="resultSummary" class="resultSummary" style="margin-top:10px;"></div>
+      <div class="row wrap" style="margin-top:10px;">
+        <button id="btnReview" class="btn primary" type="button">間違いだけ復習</button>
+      </div>
 
       <div class="grid2" style="margin-top:14px;">
         <div class="panel">

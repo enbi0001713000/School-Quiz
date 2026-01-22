@@ -17,6 +17,7 @@
 
   const DIFF_TARGET = { "基礎": 0.3, "標準": 0.4, "発展": 0.3 };
   const DIFFS = ["基礎", "標準", "発展"];
+  const getTotalQuestions = () => state.quiz.length || TOTAL_Q;
 
   // pattern は内部コードのまま保持し、表示だけ日本語にする
   const PATTERN_LABEL = {
@@ -98,6 +99,12 @@
     chkDiffB: () => $("chkDiffB"),
     chkDiffN: () => $("chkDiffN"),
     chkDiffA: () => $("chkDiffA"),
+    chkSubJa: () => $("chkSubJa"),
+    chkSubMath: () => $("chkSubMath"),
+    chkSubEn: () => $("chkSubEn"),
+    chkSubSci: () => $("chkSubSci"),
+    chkSubSoc: () => $("chkSubSoc"),
+    btnApplyFilter: () => $("btnApplyFilter"),
 
     // （UI上は非表示にする想定。存在しなくても落ちない）
     chkAvoidSimilar: () => $("chkAvoidSimilar"),
@@ -108,6 +115,7 @@
     btnNew: () => $("btnNew"),
     btnReset: () => $("btnReset"),
     btnGrade: () => $("btnGrade"),
+    btnReview: () => $("btnReview"),
 
     viewQuiz: () => $("viewQuiz"),
     viewResult: () => $("viewResult"),
@@ -347,6 +355,7 @@
     graded: false,
     explainActive: null, // 解説番号のactive表示用
     lastResult: null,
+    lastWrongIndices: [],
   };
 
   /* =========================
@@ -392,6 +401,7 @@
     if (el.btnNew()) el.btnNew().disabled = !enabled;
     if (el.btnReset()) el.btnReset().disabled = !enabled;
     if (el.btnGrade()) el.btnGrade().disabled = !enabled;
+    if (el.btnApplyFilter()) el.btnApplyFilter().disabled = !enabled;
   }
 
   function updateLockUI() {
@@ -443,6 +453,15 @@
     if (el.chkDiffN()?.checked) res.push("標準");
     if (el.chkDiffA()?.checked) res.push("発展");
     return res.length ? res : ["基礎", "標準", "発展"];
+  }
+  function getSelectedSubjects() {
+    const res = [];
+    if (el.chkSubJa()?.checked) res.push("国語");
+    if (el.chkSubMath()?.checked) res.push("数学");
+    if (el.chkSubEn()?.checked) res.push("英語");
+    if (el.chkSubSci()?.checked) res.push("理科");
+    if (el.chkSubSoc()?.checked) res.push("社会");
+    return res.length ? res : SUBJECTS.slice();
   }
 
   // ★重要：ユーザーUIに依存せず、常時ON（非表示化しても挙動が変わらない）
@@ -564,6 +583,7 @@
   }
 
   function buildQuiz() {
+    const subjects = getSelectedSubjects();
     const grades = getSelectedGrades();
     const diffs = getSelectedDiffs();
     const opts = getOptions();
@@ -573,13 +593,13 @@
     const patternGroupCount = new Map();
     const quiz = [];
 
-    for (const sub of SUBJECTS) {
+    for (const sub of subjects) {
       quiz.push(...choose5ForSubject(sub, grades, diffs, opts, usedUids, usedSignatures, patternGroupCount));
     }
     shuffle(quiz);
 
-    if (quiz.length !== TOTAL_Q) {
-      throw new Error(`出題生成に失敗（${quiz.length}/${TOTAL_Q}）`);
+    if (!quiz.length) {
+      throw new Error("出題に失敗しました（条件を見直してください）。");
     }
     return quiz;
   }
@@ -641,9 +661,10 @@
 
     const q = state.quiz[state.i];
     const a = state.answers[state.i];
+    const totalQ = getTotalQuestions();
 
-    if (el.qNo()) el.qNo().textContent = `Q${state.i + 1} / ${TOTAL_Q}`;
-    if (el.progressFill()) el.progressFill().style.width = `${Math.round(((state.i + 1) / TOTAL_Q) * 100)}%`;
+    if (el.qNo()) el.qNo().textContent = `Q${state.i + 1} / ${totalQ}`;
+    if (el.progressFill()) el.progressFill().style.width = `${Math.round(((state.i + 1) / totalQ) * 100)}%`;
 
     // chips（patternは日本語表示）
     if (el.qChips()) {
@@ -683,7 +704,7 @@
     }
 
     if (el.btnPrev()) el.btnPrev().disabled = state.i === 0;
-    if (el.btnNext()) el.btnNext().disabled = state.i === TOTAL_Q - 1;
+    if (el.btnNext()) el.btnNext().disabled = state.i === totalQ - 1;
 
     a.visits = (a.visits || 0) + 1;
   }
@@ -698,7 +719,7 @@
   function goNext() {
     if (!state.quiz.length) return;
     accumulateTime();
-    if (state.i < TOTAL_Q - 1) state.i++;
+    if (state.i < getTotalQuestions() - 1) state.i++;
     state.shownAt = nowMs();
     renderQuestion();
   }
@@ -723,6 +744,7 @@
     const perDiff = Object.fromEntries(DIFFS.map(d => [d, { total: 0, correct: 0, timeMs: 0 }]));
     const perFocus = {};
     const wrongItems = [];
+    const wrongIndices = [];
     const timeBias = { fast: 0, slow: 0, totalWrong: 0 };
 
     let correct = 0;
@@ -772,6 +794,7 @@
       f.guideMs += guideMs;
 
       if (!ok) {
+        wrongIndices.push(i);
         f.wrong += 1;
         f.wrongTimeMs += t;
         wrongItems.push({
@@ -788,8 +811,9 @@
       }
     }
 
-    const acc = correct / TOTAL_Q;
-    const avgTime = totalTime / TOTAL_Q;
+    const totalQ = getTotalQuestions();
+    const acc = totalQ ? correct / totalQ : 0;
+    const avgTime = totalQ ? totalTime / totalQ : 0;
 
     const perSubComputed = {};
     SUBJECTS.forEach(s => {
@@ -829,7 +853,7 @@
 
     const snapshot = {
       ts: new Date().toISOString(),
-      total: TOTAL_Q,
+      total: totalQ,
       correct,
       acc,
       totalTime,
@@ -839,7 +863,17 @@
       analysis,
     };
 
-    return { correct, acc, totalTime, avgTime, perSub: perSubComputed, perDiff: perDiffComputed, analysis, snapshot };
+    return {
+      correct,
+      acc,
+      totalTime,
+      avgTime,
+      perSub: perSubComputed,
+      perDiff: perDiffComputed,
+      analysis,
+      snapshot,
+      wrongIndices,
+    };
   }
 
   function buildAnalysisText({ perSub, perDiff, totalAcc, avgTime, medianMs, perFocus, wrongItems, timeBias }) {
@@ -926,6 +960,7 @@
 
     const res = computeResult();
     state.graded = true;
+    state.lastWrongIndices = res.wrongIndices || [];
 
     appendHistory(res.snapshot);
     renderResult(res);
@@ -934,17 +969,45 @@
     show(el.viewResult());
   }
 
+  function startReviewMode() {
+    const indices = (state.lastWrongIndices || []).filter((i) => Number.isInteger(i));
+    if (!indices.length) return;
+
+    const unique = [...new Set(indices)].sort((a, b) => a - b);
+    const quiz = unique.map(i => state.quiz[i]).filter(Boolean);
+    if (!quiz.length) return;
+
+    state.quiz = quiz;
+    state.answers = quiz.map(() => ({ chosen: null, timeMs: 0, visits: 0 }));
+    state.i = 0;
+    state.graded = false;
+    state.explainActive = null;
+    state.shownAt = nowMs();
+
+    show(el.viewQuiz());
+    hide(el.viewResult());
+
+    startElapsedTimer();
+    renderQuestion();
+  }
+
   function renderResult(res) {
     state.lastResult = res;
+    const totalQ = getTotalQuestions();
     if (el.resultTitle()) {
       const name = getUserName();
       el.resultTitle().textContent = name ? `${name}さんの結果` : "結果";
     }
     if (el.resultSummary()) {
       el.resultSummary().innerHTML = `
-        <div class="scoreBig">${res.correct} / ${TOTAL_Q}（${fmtPct(res.acc)}）</div>
+        <div class="scoreBig">${res.correct} / ${totalQ}（${fmtPct(res.acc)}）</div>
         <div class="muted">合計時間：${fmtSec(res.totalTime)}　平均：${fmtSec(res.avgTime)}</div>
       `;
+    }
+    if (el.btnReview()) {
+      const hasWrong = (res.wrongIndices || []).length > 0;
+      el.btnReview().style.display = hasWrong ? "" : "none";
+      el.btnReview().disabled = !hasWrong;
     }
     if (el.analysisText()) el.analysisText().textContent = res.analysis || "";
 
@@ -1324,6 +1387,8 @@
     el.btnNew()?.addEventListener("click", newQuiz);
     el.btnReset()?.addEventListener("click", resetAnswers);
     el.btnGrade()?.addEventListener("click", gradeQuiz);
+    el.btnReview()?.addEventListener("click", startReviewMode);
+    el.btnApplyFilter()?.addEventListener("click", newQuiz);
 
     el.btnPrev()?.addEventListener("click", goPrev);
     el.btnNext()?.addEventListener("click", goNext);
