@@ -45,6 +45,14 @@
     const key = String(p ?? "").replace(/^#/, "").trim();
     return PATTERN_LABEL[key] || key || "";
   };
+  const resolvePatternLabel = (q) => {
+    const raw = String(q?.pattern ?? "").replace(/^#/, "").trim();
+    const labeled = labelPattern(raw);
+    if (labeled) return labeled;
+    const group = String(q?.patternGroup ?? "").trim();
+    if (!group) return "";
+    return group.replace(/^[a-z]+_/, "").replaceAll("_", " ");
+  };
 
   /* =========================
    * DOM
@@ -55,6 +63,14 @@
   const fmtPct = (x) => `${Math.round(clamp01(x) * 100)}%`;
   const fmtSec = (ms) => `${Math.round((ms || 0) / 1000)}秒`;
   const fmtSec1 = (ms) => `${(ms / 1000).toFixed(1)}s`;
+  const TIME_GUIDE_SEC = {
+    "小": { "基礎": 20, "標準": 30, "発展": 45 },
+    "中": { "基礎": 25, "標準": 40, "発展": 60 },
+  };
+  const getTimeGuideMs = (level, diff) => {
+    const sec = TIME_GUIDE_SEC?.[level]?.[diff];
+    return (Number.isFinite(sec) ? sec : 30) * 1000;
+  };
   const getCssVar = (name, fallback) => {
     const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
     return value || fallback;
@@ -705,6 +721,9 @@
   function computeResult() {
     const perSub = Object.fromEntries(SUBJECTS.map(s => [s, { total: 0, correct: 0, timeMs: 0 }]));
     const perDiff = Object.fromEntries(DIFFS.map(d => [d, { total: 0, correct: 0, timeMs: 0 }]));
+    const perFocus = {};
+    const wrongItems = [];
+    const timeBias = { fast: 0, slow: 0, totalWrong: 0 };
 
     let correct = 0;
     let totalTime = 0;
@@ -716,6 +735,8 @@
       const chosen = a?.chosen;
       const ok = (chosen !== null && chosen === q.a);
       const t = a?.timeMs || 0;
+      const patternLabel = resolvePatternLabel(q);
+      const guideMs = getTimeGuideMs(q.level, q.diff);
 
       totalTime += t;
       times.push(t);
@@ -729,6 +750,42 @@
       perDiff[q.diff].total++;
       if (ok) perDiff[q.diff].correct++;
       perDiff[q.diff].timeMs += t;
+
+      const focusKey = `${q.sub}||${patternLabel || "その他"}||${q.diff}`;
+      if (!perFocus[focusKey]) {
+        perFocus[focusKey] = {
+          sub: q.sub,
+          pattern: patternLabel || "その他",
+          diff: q.diff,
+          total: 0,
+          correct: 0,
+          timeMs: 0,
+          guideMs: 0,
+          wrong: 0,
+          wrongTimeMs: 0,
+        };
+      }
+      const f = perFocus[focusKey];
+      f.total += 1;
+      if (ok) f.correct += 1;
+      f.timeMs += t;
+      f.guideMs += guideMs;
+
+      if (!ok) {
+        f.wrong += 1;
+        f.wrongTimeMs += t;
+        wrongItems.push({
+          sub: q.sub,
+          pattern: patternLabel || "その他",
+          diff: q.diff,
+          level: q.level,
+          timeMs: t,
+          guideMs,
+        });
+        timeBias.totalWrong += 1;
+        if (t < guideMs * 0.7) timeBias.fast += 1;
+        if (t > guideMs * 1.3) timeBias.slow += 1;
+      }
     }
 
     const acc = correct / TOTAL_Q;
@@ -759,7 +816,16 @@
     const sorted = times.slice().sort((a, b) => a - b);
     const median = sorted.length ? sorted[(sorted.length / 2) | 0] : 0;
 
-    const analysis = buildAnalysisText(perSubComputed, acc, avgTime, median);
+    const analysis = buildAnalysisText({
+      perSub: perSubComputed,
+      perDiff: perDiffComputed,
+      totalAcc: acc,
+      avgTime,
+      medianMs: median,
+      perFocus,
+      wrongItems,
+      timeBias,
+    });
 
     const snapshot = {
       ts: new Date().toISOString(),
@@ -776,18 +842,18 @@
     return { correct, acc, totalTime, avgTime, perSub: perSubComputed, perDiff: perDiffComputed, analysis, snapshot };
   }
 
-  function buildAnalysisText(perSub, totalAcc, avgTime, medianMs) {
+  function buildAnalysisText({ perSub, perDiff, totalAcc, avgTime, medianMs, perFocus, wrongItems, timeBias }) {
     const lines = [];
     const speedRatio = medianMs ? avgTime / medianMs : 1;
 
-    lines.push(`総合：正答率 ${fmtPct(totalAcc)}、平均解答時間 ${fmtSec(avgTime)}（目安）。`);
+    lines.push(`【正答率】${fmtPct(totalAcc)}（平均解答時間 ${fmtSec(avgTime)} / 目安）`);
 
     if (speedRatio < 0.85) {
-      lines.push("解答ペースは速めです。誤答が出やすい設問では、条件・否定語・単位の確認を1回挟むと安定します。");
+      lines.push("【解答ペース】速めです。誤答が出やすい設問では、条件・否定語・単位の確認を1回挟むと安定します。");
     } else if (speedRatio > 1.15) {
-      lines.push("解答ペースは慎重寄りです。方針決定（どの知識/公式を使うか）を先に固定すると時間短縮が狙えます。");
+      lines.push("【解答ペース】慎重寄りです。方針決定（どの知識/公式を使うか）を先に固定すると時間短縮が狙えます。");
     } else {
-      lines.push("解答ペースは標準的です。正確さとスピードのバランスが取れています。");
+      lines.push("【解答ペース】標準的です。正確さとスピードのバランスが取れています。");
     }
 
     const accs = SUBJECTS.map(s => perSub[s]?.acc ?? 0);
@@ -795,14 +861,59 @@
     const worst = SUBJECTS.map(s => ({ s, acc: perSub[s]?.acc ?? 0 })).sort((a, b) => a.acc - b.acc)[0];
     const gap = avgAccSub - (worst?.acc ?? 0);
 
-    if (gap < 0.12) {
-      lines.push("教科別の凹みは小さく、現状は「弱点なし（大きな偏りなし）」と判断できます。");
-    } else {
-      lines.push(`相対的に弱め：${worst.s}（${fmtPct(worst.acc)}）。この教科は基礎〜標準の取りこぼしを優先して潰すと伸びやすいです。`);
+    const best = SUBJECTS.map(s => ({ s, acc: perSub[s]?.acc ?? 0 })).sort((a, b) => b.acc - a.acc)[0];
+    if (best) {
+      lines.push(`【強み】${best.s}（${fmtPct(best.acc)}）。この教科の解き方を他教科に転用できると全体が底上げされます。`);
     }
 
-    const best = SUBJECTS.map(s => ({ s, acc: perSub[s]?.acc ?? 0 })).sort((a, b) => b.acc - a.acc)[0];
-    if (best) lines.push(`強み候補：${best.s}（${fmtPct(best.acc)}）。この教科の解き方を他教科に転用できると全体が底上げされます。`);
+    const strongPatterns = Object.values(perFocus || {})
+      .filter(x => x.total >= 2 && x.correct / x.total >= 0.8)
+      .sort((a, b) => (b.correct / b.total) - (a.correct / a.total))
+      .slice(0, 2);
+    if (strongPatterns.length) {
+      const detail = strongPatterns
+        .map(x => `${x.sub}/${x.pattern}（${fmtPct(x.correct / x.total)}）`)
+        .join("、");
+      lines.push(`【得意パターン】${detail}`);
+    }
+
+    if (gap < 0.12) {
+      lines.push("【弱点】教科別の凹みは小さく、現状は大きな偏りがありません。");
+    } else if (worst) {
+      lines.push(`【弱点】${worst.s}（${fmtPct(worst.acc)}）。基礎〜標準の取りこぼしを優先して埋めると伸びやすいです。`);
+    }
+
+    const weakFocus = Object.values(perFocus || {})
+      .filter(x => x.wrong > 0)
+      .sort((a, b) => b.wrong - a.wrong || (a.correct / a.total) - (b.correct / b.total))
+      .slice(0, 3);
+    if (weakFocus.length) {
+      lines.push("【間違えた傾向】");
+      weakFocus.forEach((x) => {
+        const acc = x.correct / x.total;
+        const avg = x.timeMs / x.total;
+        const guide = x.guideMs / x.total;
+        lines.push(`・${x.sub}/${x.pattern}（${x.diff}）: ${x.correct}/${x.total}（${fmtPct(acc)}）, 平均${fmtSec(avg)} / 目安${fmtSec(guide)}`);
+      });
+    }
+
+    const diffWeak = DIFFS.map(d => ({ d, acc: perDiff?.[d]?.acc ?? 0 }))
+      .sort((a, b) => a.acc - b.acc)[0];
+    if (diffWeak) {
+      lines.push(`【難易度別】相対的に低いのは${diffWeak.d}（${fmtPct(diffWeak.acc)}）。`);
+    }
+
+    if (wrongItems?.length) {
+      const fastRatio = timeBias.totalWrong ? timeBias.fast / timeBias.totalWrong : 0;
+      const slowRatio = timeBias.totalWrong ? timeBias.slow / timeBias.totalWrong : 0;
+      if (fastRatio >= 0.4 && fastRatio > slowRatio) {
+        lines.push("【対策】解答時間が短い誤答が多めです。設問条件の読み落とし対策として「問題文の数字・否定語にマーカー」を意識しましょう。");
+      } else if (slowRatio >= 0.4 && slowRatio > fastRatio) {
+        lines.push("【対策】時間をかけた誤答が多めです。解法の型を先に確認し、基礎公式の当てはめから着手する練習が有効です。");
+      } else {
+        lines.push("【対策】誤答の原因は混在しています。弱点教科の代表パターンを1日1セットで解き直し→解説の言語化を行うと改善が早いです。");
+      }
+    }
 
     return lines.join("\n");
   }
